@@ -78,24 +78,26 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   `orders` y `customers`). Robustez: teléfono normalizado a E.164 (+57) y se
   exige dirección antes de crear. El total/precios salen del catálogo, no de la IA.
 
-- **Fase 3 — WhatsApp (código escrito, typecheck limpio; falta probar en vivo con
-  Meta)**: webhook Meta `app/api/webhooks/meta/route.ts` (GET handshake con
-  `META_VERIFY_TOKEN`; POST valida `X-Hub-Signature-256` sobre body crudo con
-  `META_APP_SECRET`, responde 200 OK <1s y encola con `after()`). `lib/queue.ts`
-  (abstracción de cola sobre `after()`, migrable a QStash). `lib/whatsapp/meta.ts`
-  (Cloud API: `sendText`, `markAsRead`, `downloadMedia` multimodal, parsing del
-  payload). `lib/ai/worker.ts` (idempotencia por `wa_message_id` vía upsert
-  ignoreDuplicates, debounce ~8s con "último mensaje gana", gate por
-  `conversations.status`, `increment_message_counter` + corte al límite, historial
-  → `runAssistant`, media inline a Gemini). La resolución de tenant + descifrado
-  van en el trabajo de fondo (no en el request). `maxDuration=60` en la ruta.
+- **Fase 3 — WhatsApp (verificada en vivo en producción)**: webhook Meta
+  `app/api/webhooks/meta/route.ts` (GET handshake con `META_VERIFY_TOKEN`; POST
+  valida `X-Hub-Signature-256` sobre body crudo con `META_APP_SECRET`, responde
+  200 OK <1s y encola con `after()`). `lib/queue.ts` (abstracción de cola sobre
+  `after()`, migrable a QStash). `lib/whatsapp/meta.ts` (Cloud API `v23.0`:
+  `sendText`, `markAsRead`, `downloadMedia` multimodal, parsing del payload).
+  `lib/ai/worker.ts` (idempotencia por `wa_message_id` vía upsert ignoreDuplicates,
+  debounce ~8s con "último mensaje gana", gate por `conversations.status`,
+  `increment_message_counter` + corte al límite, historial → `runAssistant`, media
+  inline a Gemini). La resolución de tenant + descifrado van en el trabajo de fondo
+  (no en el request). `maxDuration=60` en la ruta. **Desplegado en Vercel** (repo
+  `github.com/juanarangoceo/nitro_bot`, env vars de runtime cargadas); webhook de
+  Meta registrado y suscrito a `messages`. **Verificado**: mensaje real → respuesta
+  del asesor. Tenant Elegance con `wa_phone_number_id` y `wa_access_token` cifrado
+  (vía `npm run seed:wa`).
 
 ### 🔜 Pendiente
-- **Fase 3 — Activar Meta**: cargar `META_APP_SECRET`/`META_VERIFY_TOKEN`/token del
-  número de prueba, registrar el webhook (necesita URL pública), y probar e2e:
-  mensaje → respuesta; reenvío no duplica; ráfaga = una sola respuesta.
-- **Registrar webhooks de Shopify** (sync incremental en vivo) — necesita URL
-  pública (Vercel o túnel). El backfill ya cubre la carga inicial.
+- **Registrar webhooks de Shopify** (sync incremental en vivo) — ya hay URL pública
+  (Vercel): falta registrar los topics `products/*` apuntando a
+  `/api/webhooks/shopify`. El backfill ya cubre la carga inicial.
 - **Fase 5 — Dashboard**: Auth, consumo, tickets Realtime, métricas, CRM, editor.
 - **Fase 6 — Pruebas y activación**: e2e, tests de fuga RLS, observabilidad, cron de reseteo, migrar Elegance a producción.
 
@@ -126,6 +128,7 @@ lib/shopify/sync.ts                 sync de catálogo (webhook + backfill)
 lib/shopify/orders.ts               crea orden COD (orderCreate, PENDING)
 scripts/migrate.mjs                 runner de migraciones (pg directo)
 scripts/seed-tenant.ts              alta de tenant con creds cifradas (tsx)
+scripts/seed-wa.ts                  carga creds WhatsApp del tenant (token cifrado)
 scripts/backfill-catalog.ts         carga inicial del catálogo (tsx)
 supabase/migrations/*.sql           esquema + RLS + grants
 ```
@@ -137,6 +140,7 @@ npm run dev                 # Next dev
 npm run migrate             # aplica migraciones pendientes
 npm run migrate:status      # estado de migraciones
 SEED_SHOP_DOMAIN=... SEED_SHOP_TOKEN=... SEED_SHOP_SECRET=... npm run seed:tenant
+SEED_WA_PHONE_NUMBER_ID=... SEED_WA_TOKEN=... npm run seed:wa
 SEED_SHOP_DOMAIN=... npm run backfill:catalog
 npx tsc --noEmit            # typecheck
 ```
@@ -151,5 +155,5 @@ npx tsc --noEmit            # typecheck
 - Identificadores de código/tablas/env en inglés `snake_case`. Mensajes del asesor
   y UI en **español (Colombia)**, tono configurable por tenant.
 - Nada de secretos en el repo: todo en `.env.local` (gitignored) o cifrado en DB.
-- Credenciales por fase: Shopify dev ✅ y Gemini ✅ cargadas. **Meta pendiente** (Fase 3).
+- Credenciales por fase: Shopify dev ✅, Gemini ✅ y Meta/WhatsApp (número de prueba) ✅ cargadas.
 - Next.js 16 tiene breaking changes (ver `AGENTS.md`): consultar `node_modules/next/dist/docs/` antes de escribir código de Next.
