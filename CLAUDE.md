@@ -102,12 +102,32 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   `updated_at`). El stock se mantiene al día porque cada `products/update`
   re-sincroniza el producto completo (incluye `totalInventory`).
 
+- **Fase 5 — Dashboard (construido y verificado)**: Auth con Supabase
+  (`@supabase/ssr`), clientes SSR `lib/supabase/server.ts` (RLS, authenticated) y
+  `lib/supabase/client.ts` (navegador, Realtime). `proxy.ts` (Next 16; refresca
+  sesión + protege `/dashboard`). Login (`app/login`) + Server Actions
+  (`app/actions/auth.ts`). Layout protegido con nav por `tenants.modules`
+  (`lib/dashboard/context.ts` resuelve usuario→tenant vía RLS). Vistas: **Inicio**
+  (consumo del mes con alerta al 80%), **Métricas**, **CRM** + export CSV
+  (`/dashboard/crm/export`), **Editor del asesor** (edita `system_prompt` +
+  chat de prueba con `runAssistant`), **Tickets** en vivo (Realtime: lista +
+  conversación; responder por WhatsApp pasa a `human_active`; resolver vuelve a
+  `bot_active`). Migración #5 habilitó Realtime (respeta RLS) en
+  `tickets`/`messages`/`conversations`. Usuarios del dashboard vía
+  `npm run seed:dashboard-user`. **Verificado**: sign-in OK; **RLS aísla** (un
+  usuario solo ve su tenant); `tenant_secrets` invisible para `authenticated` (sin
+  fuga); proxy redirige `/dashboard`→`/login` sin sesión. Faltan: `NEXT_PUBLIC_*`
+  de Supabase en Vercel para el dashboard en producción.
+
 ### 🔜 Pendiente
+- **Vercel**: agregar `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  para que el dashboard funcione en producción.
+- **Editor — historial/rollback** del prompt (follow-up; hoy solo edita + prueba).
 - **Inventory-level webhook** (opcional): `inventory_levels/update` necesita un
   handler aparte (su payload trae `inventory_item_id`, no el product id). Hoy el
   stock se refresca vía `products/update`.
-- **Fase 5 — Dashboard**: Auth, consumo, tickets Realtime, métricas, CRM, editor.
-- **Fase 6 — Pruebas y activación**: e2e, tests de fuga RLS, observabilidad, cron de reseteo, migrar Elegance a producción.
+- **Fase 6 — Pruebas y activación**: e2e, observabilidad, cron de reseteo mensual
+  del contador, migrar Elegance a producción. (La fuga RLS ya se probó en Fase 5.)
 
 > Plan completo: `~/.claude/plans/splendid-cuddling-candy.md`.
 
@@ -122,6 +142,18 @@ app/api/dev/chat/route.ts           endpoint interno de prueba del asesor (dev)
 lib/queue.ts                        cola de fondo (after() hoy, QStash después)
 lib/whatsapp/meta.ts                Cloud API: enviar/leer/descargar media + parsing
 lib/ai/worker.ts                    procesa entrante (idempotencia/debounce/gate/IA)
+app/login/page.tsx                  login del dashboard (Server Action)
+app/actions/auth.ts                 signIn/signOut (Server Actions)
+app/dashboard/layout.tsx            layout protegido + nav por módulos
+app/dashboard/page.tsx              Inicio: consumo del mes (alerta 80%)
+app/dashboard/metrics/page.tsx      métricas (conversaciones, órdenes, ventas)
+app/dashboard/crm/(page|export)     CRM + exportación CSV (RLS)
+app/dashboard/editor/*              editor del system_prompt + chat de prueba
+app/dashboard/tickets/*             tickets en vivo (Realtime + responder/resolver)
+proxy.ts                            Next 16: refresca sesión + protege /dashboard
+lib/dashboard/context.ts            resuelve usuario→tenant (RLS) del dashboard
+lib/supabase/server.ts              cliente SSR authenticated (RLS) del dashboard
+lib/supabase/client.ts              cliente de navegador (Realtime)
 lib/env.ts                          acceso a env server-side (lazy)
 lib/crypto.ts                       AES-256-GCM de credenciales por tenant
 lib/tenant.ts                       resuelve tenant + descifra secretos
@@ -152,6 +184,7 @@ SEED_SHOP_DOMAIN=... SEED_SHOP_TOKEN=... SEED_SHOP_SECRET=... npm run seed:tenan
 SEED_WA_PHONE_NUMBER_ID=... SEED_WA_TOKEN=... npm run seed:wa
 SEED_SHOP_DOMAIN=... npm run backfill:catalog
 WEBHOOK_BASE_URL=https://...vercel.app npm run register:shopify-webhooks
+SEED_USER_EMAIL=... SEED_USER_PASSWORD=... npm run seed:dashboard-user
 npx tsc --noEmit            # typecheck
 ```
 

@@ -12,9 +12,11 @@
     "seed:tenant": "tsx scripts/seed-tenant.ts",
     "seed:wa": "tsx scripts/seed-wa.ts",
     "backfill:catalog": "tsx scripts/backfill-catalog.ts",
-    "register:shopify-webhooks": "tsx scripts/register-shopify-webhooks.ts"
+    "register:shopify-webhooks": "tsx scripts/register-shopify-webhooks.ts",
+    "seed:dashboard-user": "tsx scripts/seed-dashboard-user.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.107.0",
     "next": "16.2.7",
     "react": "19.2.4",
