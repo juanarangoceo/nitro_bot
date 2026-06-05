@@ -219,14 +219,20 @@ export async function processInboundMessage(params: {
   }
 
   // 6) Construir historial → correr el asesor.
-  const { data: history } = await supabase
+  // Tomamos los MAX_HISTORY mensajes MÁS RECIENTES (no los más viejos) y los
+  // devolvemos a orden cronológico. Con `ascending: true` + limit, al pasar de
+  // MAX_HISTORY mensajes la ventana se quedaba clavada en los primeros: el turno
+  // actual del cliente nunca entraba y el contexto terminaba en un turno del
+  // modelo → Gemini respondía vacío y el bot dejaba de contestar.
+  const { data: recent } = await supabase
     .from("messages")
     .select("id, sender, content")
     .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
     .limit(MAX_HISTORY);
+  const history = (recent ?? []).reverse();
 
-  const contents = buildContents(history ?? [], currentMessageId, media);
+  const contents = buildContents(history, currentMessageId, media);
 
   const shopify =
     tenant.shopify_domain && secrets.shopify_access_token
