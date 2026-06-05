@@ -41,6 +41,12 @@ del asesor.
   resultó inconsistente disparando herramientas (~3/5); 3.5 Flash es 5/5 fiable.
   Gemini 3.x: NO enviar `temperature`; `functionResponse` debe incluir el `id`
   del `functionCall` (name y conteo coincidentes) o el modelo responde vacío.
+  **El `contents` debe terminar en turno del cliente (`role: "user"`)**: si la
+  conversación termina en un turno del modelo, Gemini devuelve texto vacío
+  (`finishReason STOP`, 0 tokens de salida). Por eso la ventana de historial toma
+  los N **más recientes** (`ascending: false` + `limit`, luego `reverse()`), nunca
+  los más viejos: con `ascending: true + limit` la ventana se clavaba en los
+  primeros mensajes al pasar de N y el bot dejaba de responder en silencio.
 
 ## Stack
 
@@ -210,6 +216,30 @@ SEED_USER_EMAIL=... SEED_USER_PASSWORD=... npm run seed:dashboard-user
 npm run verify              # suite de verificación (RAG + fuga RLS, no muta)
 npx tsc --noEmit            # typecheck
 ```
+
+## Depuración: "el bot no responde"
+
+El webhook responde 200 OK aunque el procesamiento de fondo falle, así que un 200
+en los logs NO significa que el bot contestó. El worker tiene varios `return`
+silenciosos (idempotencia, debounce, gate, **respuesta vacía de Gemini**). Orden
+de revisión:
+
+1. **¿Llegó el mensaje?** `messages` debe tener la fila `sender='customer'`. Si
+   está, el webhook entregó y el worker corrió al menos hasta el insert.
+2. **¿Hay respuesta del bot?** Busca `sender='bot'` posterior. Si no hay y NO hay
+   error en los logs de Vercel → el worker hizo un `return` silencioso.
+3. **Estado de la conversación**: si `conversations.status != 'bot_active'`
+   (`requires_human`/`human_active`/`closed`), el bot calla **a propósito** hasta
+   que un humano resuelva el ticket en `/dashboard/tickets` (vuelve a `bot_active`).
+4. **Contador**: `current_month_messages` vs `message_limit` (corte al límite).
+5. **Respuesta vacía de Gemini**: reproduce `runAssistant` con el historial real;
+   si `text` viene `""`, casi siempre es que el `contents` termina en turno del
+   modelo (ver nota de Gemini 3.x arriba). `finishReason STOP` + 0 tokens de
+   salida lo confirma.
+
+Errores reales del trabajo de fondo se loguean como `[queue] tarea de fondo
+falló` (nivel error en Vercel). Su ausencia + sin respuesta = `return` silencioso,
+no excepción.
 
 ## Conexión a Supabase / convenciones
 
