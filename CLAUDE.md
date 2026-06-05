@@ -119,15 +119,32 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   fuga); proxy redirige `/dashboard`→`/login` sin sesión. Faltan: `NEXT_PUBLIC_*`
   de Supabase en Vercel para el dashboard en producción.
 
+- **Fase 6 — Pruebas y activación (en gran parte hecha)**: **cron de reseteo
+  mensual** del contador (`/api/cron/reset-counters`, protegido por `CRON_SECRET`,
+  agendado en `vercel.json` el día 1 a las 05:00 UTC; migración #6 agregó
+  `reset_stale_message_counters()` — el reseteo perezoso de
+  `increment_message_counter` sigue siendo el respaldo). **Health check**
+  `/api/health` (verifica DB). **Suite de verificación** `npm run verify`
+  (read-only + test de fuga RLS con usuario desechable). **Verificado**: las 4
+  comprobaciones en verde (secretos descifran, RAG devuelve productos, función de
+  reseteo, RLS aísla + `tenant_secrets` oculto).
+
 ### 🔜 Pendiente
-- **Vercel**: agregar `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  para que el dashboard funcione en producción.
+- **Vercel**: agregar `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  (dashboard) y `CRON_SECRET` (cron). Redeploy.
 - **Editor — historial/rollback** del prompt (follow-up; hoy solo edita + prueba).
 - **Inventory-level webhook** (opcional): `inventory_levels/update` necesita un
   handler aparte (su payload trae `inventory_item_id`, no el product id). Hoy el
   stock se refresca vía `products/update`.
-- **Fase 6 — Pruebas y activación**: e2e, observabilidad, cron de reseteo mensual
-  del contador, migrar Elegance a producción. (La fuga RLS ya se probó en Fase 5.)
+- **Activación a producción de Elegance** (operativo, requiere cuentas reales):
+  1. App Shopify de producción → nuevo tenant_secret (token+secret) vía `seed:tenant`;
+     `backfill:catalog` y `register:shopify-webhooks` contra el dominio real.
+  2. Número de WhatsApp de producción en Meta (Business verificado) → `seed:wa` con
+     el `phone_number_id` y token de larga duración reales; re-suscribir el webhook.
+  3. Cargar `CRON_SECRET` y las `NEXT_PUBLIC_*` en Vercel; crear usuarios del
+     dashboard (`seed:dashboard-user`).
+  4. `npm run verify` apuntando al tenant de producción; smoke test e2e (mensaje
+     real → respuesta, orden COD de prueba) y revisar `/api/health`.
 
 > Plan completo: `~/.claude/plans/splendid-cuddling-candy.md`.
 
@@ -138,6 +155,8 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
 ```
 app/api/webhooks/shopify/route.ts   webhook catálogo (HMAC + after())
 app/api/webhooks/meta/route.ts      webhook WhatsApp (handshake + firma + encola)
+app/api/cron/reset-counters/route.ts  cron mensual del contador (CRON_SECRET)
+app/api/health/route.ts             health check (app + DB)
 app/api/dev/chat/route.ts           endpoint interno de prueba del asesor (dev)
 lib/queue.ts                        cola de fondo (after() hoy, QStash después)
 lib/whatsapp/meta.ts                Cloud API: enviar/leer/descargar media + parsing
@@ -170,7 +189,10 @@ scripts/migrate.mjs                 runner de migraciones (pg directo)
 scripts/seed-tenant.ts              alta de tenant con creds cifradas (tsx)
 scripts/seed-wa.ts                  carga creds WhatsApp del tenant (token cifrado)
 scripts/register-shopify-webhooks.ts  registra webhooks products/* (idempotente)
+scripts/seed-dashboard-user.ts      alta de usuario del dashboard (auth + app_users)
+scripts/verify.ts                   suite de verificación (RAG + fuga RLS)
 scripts/backfill-catalog.ts         carga inicial del catálogo (tsx)
+vercel.json                         cron del reseteo mensual del contador
 supabase/migrations/*.sql           esquema + RLS + grants
 ```
 
@@ -185,6 +207,7 @@ SEED_WA_PHONE_NUMBER_ID=... SEED_WA_TOKEN=... npm run seed:wa
 SEED_SHOP_DOMAIN=... npm run backfill:catalog
 WEBHOOK_BASE_URL=https://...vercel.app npm run register:shopify-webhooks
 SEED_USER_EMAIL=... SEED_USER_PASSWORD=... npm run seed:dashboard-user
+npm run verify              # suite de verificación (RAG + fuga RLS, no muta)
 npx tsc --noEmit            # typecheck
 ```
 

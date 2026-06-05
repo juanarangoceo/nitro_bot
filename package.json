@@ -13,7 +13,8 @@
     "seed:wa": "tsx scripts/seed-wa.ts",
     "backfill:catalog": "tsx scripts/backfill-catalog.ts",
     "register:shopify-webhooks": "tsx scripts/register-shopify-webhooks.ts",
-    "seed:dashboard-user": "tsx scripts/seed-dashboard-user.ts"
+    "seed:dashboard-user": "tsx scripts/seed-dashboard-user.ts",
+    "verify": "tsx scripts/verify.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
