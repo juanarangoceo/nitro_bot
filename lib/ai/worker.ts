@@ -204,9 +204,12 @@ export async function processInboundMessage(params: {
   }
 
   // 5) Contador de consumo atómico + corte al pasar el límite.
-  const { data: counter } = await supabase
+  const { data: counter, error: counterError } = await supabase
     .rpc("increment_message_counter", { p_tenant_id: tenant.id })
     .maybeSingle<{ over_limit: boolean; at_80_percent: boolean }>();
+  if (counterError) {
+    console.error(`[worker] increment_message_counter falló:`, counterError.message);
+  }
   if (counter?.over_limit) {
     console.warn(`[worker] tenant ${tenant.id} superó el límite de mensajes; no respondo.`);
     return;

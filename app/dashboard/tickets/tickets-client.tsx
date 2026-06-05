@@ -33,6 +33,12 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
   if (!supabaseRef.current) supabaseRef.current = createBrowserSupabase();
   const supabase = supabaseRef.current;
 
+  // Reconciliar la selección con la lista refrescada (router.refresh tras
+  // resolver): si el ticket seleccionado ya no está abierto, se limpia el panel.
+  useEffect(() => {
+    setSelected((cur) => (cur ? initialTickets.find((t) => t.id === cur.id) ?? null : null));
+  }, [initialTickets]);
+
   // Realtime de la lista: cualquier cambio en tickets refresca el server component.
   useEffect(() => {
     const channel = supabase
