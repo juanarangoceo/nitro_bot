@@ -94,10 +94,18 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   del asesor. Tenant Elegance con `wa_phone_number_id` y `wa_access_token` cifrado
   (vía `npm run seed:wa`).
 
+- **Webhooks de Shopify (registrados y verificados)**: topics `products/create`,
+  `products/update`, `products/delete` apuntando a
+  `https://nitro-bot-coral.vercel.app/api/webhooks/shopify` (vía
+  `npm run register:shopify-webhooks`, idempotente). **Verificado** con un webhook
+  sintético firmado contra el endpoint en vivo: HTTP 200 + re-sync (cambió
+  `updated_at`). El stock se mantiene al día porque cada `products/update`
+  re-sincroniza el producto completo (incluye `totalInventory`).
+
 ### 🔜 Pendiente
-- **Registrar webhooks de Shopify** (sync incremental en vivo) — ya hay URL pública
-  (Vercel): falta registrar los topics `products/*` apuntando a
-  `/api/webhooks/shopify`. El backfill ya cubre la carga inicial.
+- **Inventory-level webhook** (opcional): `inventory_levels/update` necesita un
+  handler aparte (su payload trae `inventory_item_id`, no el product id). Hoy el
+  stock se refresca vía `products/update`.
 - **Fase 5 — Dashboard**: Auth, consumo, tickets Realtime, métricas, CRM, editor.
 - **Fase 6 — Pruebas y activación**: e2e, tests de fuga RLS, observabilidad, cron de reseteo, migrar Elegance a producción.
 
@@ -129,6 +137,7 @@ lib/shopify/orders.ts               crea orden COD (orderCreate, PENDING)
 scripts/migrate.mjs                 runner de migraciones (pg directo)
 scripts/seed-tenant.ts              alta de tenant con creds cifradas (tsx)
 scripts/seed-wa.ts                  carga creds WhatsApp del tenant (token cifrado)
+scripts/register-shopify-webhooks.ts  registra webhooks products/* (idempotente)
 scripts/backfill-catalog.ts         carga inicial del catálogo (tsx)
 supabase/migrations/*.sql           esquema + RLS + grants
 ```
@@ -142,6 +151,7 @@ npm run migrate:status      # estado de migraciones
 SEED_SHOP_DOMAIN=... SEED_SHOP_TOKEN=... SEED_SHOP_SECRET=... npm run seed:tenant
 SEED_WA_PHONE_NUMBER_ID=... SEED_WA_TOKEN=... npm run seed:wa
 SEED_SHOP_DOMAIN=... npm run backfill:catalog
+WEBHOOK_BASE_URL=https://...vercel.app npm run register:shopify-webhooks
 npx tsc --noEmit            # typecheck
 ```
 
