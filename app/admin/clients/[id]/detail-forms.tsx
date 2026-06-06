@@ -54,6 +54,9 @@ export function RotateShopify({ tenantId, slug, name }: { tenantId: string; slug
       <input type="hidden" name="tenant_id" value={tenantId} />
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="name" value={name} />
+      <p className="text-[11px] text-neutral-500">
+        Shopify. Llena solo lo que quieras cambiar; lo que dejes vacío se conserva.
+      </p>
       <input
         name="shopify_domain"
         placeholder="tienda.myshopify.com"
@@ -151,6 +154,9 @@ export function RotateWa({ tenantId, slug }: { tenantId: string; slug: string })
     <form action={action} className="space-y-2">
       <input type="hidden" name="tenant_id" value={tenantId} />
       <input type="hidden" name="slug" value={slug} />
+      <p className="text-[11px] text-neutral-500">
+        WhatsApp. Llena solo lo que quieras cambiar; lo vacío se conserva (el WABA ID ya no se borra).
+      </p>
       <input
         name="wa_phone_number_id"
         placeholder="phone_number_id"

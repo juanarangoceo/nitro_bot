@@ -6,15 +6,13 @@
 
 import { requirePlatformAdmin, logAudit } from "@/lib/admin/context";
 import { provisionTenant, type ProvisionStep } from "@/lib/provisioning/provision";
-import { upsertTenant } from "@/lib/provisioning/tenant";
-import { seedWaCreds } from "@/lib/provisioning/whatsapp";
 import {
   subscribeWabaToApp,
   setBusinessProfile,
   uploadProfilePhoto,
   type BusinessProfile,
 } from "@/lib/whatsapp/meta";
-import { decryptSecret } from "@/lib/crypto";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { env } from "@/lib/env";
 import { revalidatePath } from "next/cache";
 
@@ -174,29 +172,39 @@ export async function updateSystemPromptAdmin(
 // ── Rotar credenciales (re-ejecutar partes del alta) ────────────────────────
 export type RotateState = { ok: boolean; error: string | null };
 
+// Rotación PARCIAL: solo cambia los campos que vengan llenos; lo vacío se
+// conserva (no se pisa). Shopify y WhatsApp son independientes entre sí.
 export async function rotateShopifyCreds(
   _prev: RotateState,
   fd: FormData
 ): Promise<RotateState> {
   const { admin, adminId } = await requirePlatformAdmin();
   const tenantId = String(fd.get("tenant_id") ?? "");
-  const slug = String(fd.get("slug") ?? "");
-  const name = String(fd.get("name") ?? "");
   const domain = String(fd.get("shopify_domain") ?? "").trim();
   const token = String(fd.get("shopify_access_token") ?? "").trim();
   const secret = String(fd.get("shopify_api_secret") ?? "").trim();
-  if (!slug || !domain || !token || !secret) {
-    return { ok: false, error: "Completa dominio, token y secret de Shopify." };
+  if (!tenantId) return { ok: false, error: "Falta el tenant." };
+  if (!domain && !token && !secret) {
+    return { ok: false, error: "Llena al menos un campo a cambiar." };
   }
   try {
-    await upsertTenant({
-      slug,
-      name,
-      shopifyDomain: domain,
-      shopifyAccessToken: token,
-      shopifyApiSecret: secret,
+    if (domain) {
+      await admin.from("tenants").update({ shopify_domain: domain }).eq("id", tenantId);
+    }
+    // Upsert merge-duplicates: solo toca las columnas presentes (preserva el
+    // otro secreto de Shopify y el token de WhatsApp).
+    const secrets: Record<string, unknown> = { tenant_id: tenantId, updated_at: new Date().toISOString() };
+    if (token) secrets.shopify_access_token = encryptSecret(token);
+    if (secret) secrets.shopify_webhook_secret = encryptSecret(secret);
+    if (token || secret) {
+      await admin.from("tenant_secrets").upsert(secrets, { onConflict: "tenant_id" });
+    }
+    await logAudit(admin, {
+      adminId,
+      action: "rotate_creds",
+      tenantId,
+      detail: { provider: "shopify", changed: { domain: !!domain, token: !!token, secret: !!secret } },
     });
-    await logAudit(admin, { adminId, action: "rotate_creds", tenantId, detail: { provider: "shopify" } });
     revalidatePath(`/admin/clients/${tenantId}`);
     return { ok: true, error: null };
   } catch (e) {
@@ -300,16 +308,33 @@ export async function configureWaProfile(
 export async function rotateWaCreds(_prev: RotateState, fd: FormData): Promise<RotateState> {
   const { admin, adminId } = await requirePlatformAdmin();
   const tenantId = String(fd.get("tenant_id") ?? "");
-  const slug = String(fd.get("slug") ?? "");
   const phoneNumberId = String(fd.get("wa_phone_number_id") ?? "").trim();
   const token = String(fd.get("wa_token") ?? "").trim();
-  const wabaId = String(fd.get("waba_id") ?? "").trim() || null;
-  if (!slug || !phoneNumberId || !token) {
-    return { ok: false, error: "Completa phone_number_id y token de WhatsApp." };
+  const wabaId = String(fd.get("waba_id") ?? "").trim();
+  if (!tenantId) return { ok: false, error: "Falta el tenant." };
+  if (!phoneNumberId && !token && !wabaId) {
+    return { ok: false, error: "Llena al menos un campo a cambiar." };
   }
   try {
-    await seedWaCreds({ slug, phoneNumberId, waToken: token, businessAccountId: wabaId });
-    await logAudit(admin, { adminId, action: "rotate_creds", tenantId, detail: { provider: "whatsapp" } });
+    // Solo los campos provistos; un campo vacío NO borra el valor guardado.
+    const tUpdate: Record<string, unknown> = {};
+    if (phoneNumberId) tUpdate.wa_phone_number_id = phoneNumberId;
+    if (wabaId) tUpdate.wa_business_account_id = wabaId;
+    if (Object.keys(tUpdate).length) {
+      await admin.from("tenants").update(tUpdate).eq("id", tenantId);
+    }
+    if (token) {
+      await admin.from("tenant_secrets").upsert(
+        { tenant_id: tenantId, wa_access_token: encryptSecret(token), updated_at: new Date().toISOString() },
+        { onConflict: "tenant_id" }
+      );
+    }
+    await logAudit(admin, {
+      adminId,
+      action: "rotate_creds",
+      tenantId,
+      detail: { provider: "whatsapp", changed: { phone: !!phoneNumberId, token: !!token, waba: !!wabaId } },
+    });
     revalidatePath(`/admin/clients/${tenantId}`);
     return { ok: true, error: null };
   } catch (e) {
