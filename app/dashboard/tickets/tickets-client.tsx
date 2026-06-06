@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
-import { replyToTicket, resolveTicket, type ReplyState } from "./actions";
+import { replyToTicket, resolveTicket, sendMediaFromAgent, type ReplyState } from "./actions";
 
 export type TicketRow = {
   id: string;
@@ -18,16 +18,38 @@ type Message = {
   id: string;
   sender: string;
   content: string | null;
+  msg_type: string;
+  media_path: string | null;
+  media_url: string | null;
   created_at: string;
 };
 
 const replyInit: ReplyState = { ok: false, error: null };
+
+// Renderiza el cuerpo del mensaje según su tipo (texto / imagen / audio).
+function MessageBody({ m }: { m: Message }) {
+  const hasMedia = m.media_path || m.media_url;
+  if (m.msg_type === "image" && hasMedia) {
+    return (
+      <div className="space-y-1">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={`/dashboard/media/${m.id}`} alt={m.content ?? "imagen"} className="max-h-60 rounded-lg" />
+        {m.content && m.content !== "[imagen]" && <p>{m.content}</p>}
+      </div>
+    );
+  }
+  if (m.msg_type === "audio" && hasMedia) {
+    return <audio controls src={`/dashboard/media/${m.id}`} className="max-w-full" />;
+  }
+  return <p className="whitespace-pre-wrap">{m.content}</p>;
+}
 
 export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState<TicketRow | null>(initialTickets[0] ?? null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [replyState, replyAction, replying] = useActionState(replyToTicket, replyInit);
+  const [mediaState, mediaAction, sendingMedia] = useActionState(sendMediaFromAgent, replyInit);
   const supabaseRef = useRef<ReturnType<typeof createBrowserSupabase> | null>(null);
 
   if (!supabaseRef.current) supabaseRef.current = createBrowserSupabase();
@@ -61,7 +83,7 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
     let active = true;
     supabase
       .from("messages")
-      .select("id, sender, content, created_at")
+      .select("id, sender, content, msg_type, media_path, media_url, created_at")
       .eq("conversation_id", selected.conversation_id)
       .order("created_at", { ascending: true })
       .then(({ data }) => {
@@ -95,6 +117,11 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
   useEffect(() => {
     if (replyState.ok) setFormKey((k) => k + 1);
   }, [replyState.ok]);
+
+  const [mediaKey, setMediaKey] = useState(0);
+  useEffect(() => {
+    if (mediaState.ok) setMediaKey((k) => k + 1);
+  }, [mediaState.ok]);
 
   return (
     <div className="grid gap-4 md:grid-cols-[280px_1fr]">
@@ -154,7 +181,7 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
                     : "ml-auto bg-neutral-900 text-white"
                 }`}
               >
-                {m.content}
+                <MessageBody m={m} />
                 <span className="mt-1 block text-[10px] opacity-60">{m.sender}</span>
               </div>
             ))}
@@ -177,6 +204,29 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
               </button>
             </div>
             {replyState.error && <p className="mt-2 text-sm text-red-600">{replyState.error}</p>}
+          </form>
+
+          {/* Enviar foto o audio */}
+          <form
+            key={`media-${mediaKey}`}
+            action={mediaAction}
+            className="flex items-center gap-2 border-t border-neutral-100 p-3"
+          >
+            <input type="hidden" name="conversation_id" value={selected.conversation_id} />
+            <input
+              type="file"
+              name="file"
+              accept="image/*,audio/*"
+              className="flex-1 text-xs text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-xs file:text-neutral-700"
+            />
+            <button
+              type="submit"
+              disabled={sendingMedia}
+              className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-60"
+            >
+              {sendingMedia ? "Enviando…" : "Enviar foto/audio"}
+            </button>
+            {mediaState.error && <p className="text-xs text-red-600">{mediaState.error}</p>}
           </form>
         </div>
       ) : (

@@ -14,6 +14,7 @@ import { env } from "../env";
 import { buildSystemPrompt } from "./prompt";
 import { toolDeclarations, executeTool, type ToolContext } from "./tools";
 import type { ShopifyCreds } from "../shopify/client";
+import type { WaCreds } from "../whatsapp/meta";
 import type { Tenant } from "../tenant";
 
 // Parts dinámicos (texto | functionCall | functionResponse | inlineData |
@@ -60,11 +61,13 @@ export async function runAssistant(params: {
   tenant: Tenant;
   conversationId?: string;
   shopify?: ShopifyCreds;
+  wa?: WaCreds;
+  customerPhone?: string;
   contents: Content[];
 }): Promise<AssistantResult> {
-  const { tenant, conversationId, shopify, contents } = params;
+  const { tenant, conversationId, shopify, wa, customerPhone, contents } = params;
   const systemPrompt = buildSystemPrompt(tenant);
-  const ctx: ToolContext = { tenant, conversationId, shopify };
+  const ctx: ToolContext = { tenant, conversationId, shopify, wa, customerPhone };
   const working: Content[] = [...contents];
   const toolTrace: AssistantResult["toolTrace"] = [];
 

@@ -14,6 +14,7 @@
     "backfill:catalog": "tsx scripts/backfill-catalog.ts",
     "register:shopify-webhooks": "tsx scripts/register-shopify-webhooks.ts",
     "seed:dashboard-user": "tsx scripts/seed-dashboard-user.ts",
+    "seed:platform-admin": "tsx scripts/seed-platform-admin.ts",
     "verify": "tsx scripts/verify.ts"
   },
   "dependencies": {

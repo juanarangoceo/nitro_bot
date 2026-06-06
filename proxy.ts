@@ -36,15 +36,19 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
-  if (!user && pathname.startsWith("/dashboard")) {
+  // Portón optimista: rutas protegidas sin sesión → /login. La autorización real
+  // (RLS del cliente, super-admin para /admin) vive en cada Server Component/Action.
+  if (!user && (pathname.startsWith("/dashboard") || pathname.startsWith("/admin"))) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
-  // Si ya hay sesión y va a /login, mándalo al dashboard.
+  // Si ya hay sesión y va a /login, mándalo a la raíz, que rutea por rol
+  // (super-admin → /admin, cliente → /dashboard). Evita el loop de un admin
+  // (sin app_users) cayendo en /dashboard.
   if (user && pathname === "/login") {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    url.pathname = "/";
     return NextResponse.redirect(url);
   }
 

@@ -34,4 +34,14 @@ export const env = {
   get META_VERIFY_TOKEN() {
     return required("META_VERIFY_TOKEN");
   },
+  // App ID de Meta (opcional): solo se usa para la subida resumable de la foto
+  // de perfil de WhatsApp en el alta. Si falta, el alta omite la foto.
+  get META_APP_ID(): string | null {
+    return process.env.META_APP_ID ?? null;
+  },
+  // Base URL pública del despliegue (para registrar webhooks de Shopify desde
+  // el panel de alta). Cae a WEBHOOK_BASE_URL para compatibilidad con los scripts.
+  get APP_BASE_URL(): string | null {
+    return process.env.APP_BASE_URL ?? process.env.WEBHOOK_BASE_URL ?? null;
+  },
 };

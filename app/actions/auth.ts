@@ -5,6 +5,7 @@
 // gestionadas por @supabase/ssr.
 
 import { createServerSupabase } from "@/lib/supabase/server";
+import { isPlatformAdmin } from "@/lib/admin/context";
 import { redirect } from "next/navigation";
 
 export type AuthState = { error: string | null };
@@ -15,9 +16,11 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   if (!email || !password) return { error: "Ingresa correo y contraseña." };
 
   const supabase = await createServerSupabase();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: "Credenciales inválidas." };
 
+  // Ruteo por rol: los super-admin entran al panel de plataforma.
+  if (data.user && (await isPlatformAdmin(data.user.id))) redirect("/admin");
   redirect("/dashboard");
 }
 

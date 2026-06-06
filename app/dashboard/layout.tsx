@@ -13,9 +13,11 @@ export default async function DashboardLayout({
   const items: NavItem[] = [
     { href: "/dashboard", label: "Inicio" },
     ...(mod.tickets !== false ? [{ href: "/dashboard/tickets", label: "Tickets" }] : []),
+    ...(mod.conversations !== false
+      ? [{ href: "/dashboard/conversations", label: "Conversaciones" }]
+      : []),
     ...(mod.metrics !== false ? [{ href: "/dashboard/metrics", label: "Métricas" }] : []),
     ...(mod.crm !== false ? [{ href: "/dashboard/crm", label: "CRM" }] : []),
-    ...(mod.editor !== false ? [{ href: "/dashboard/editor", label: "Asesor" }] : []),
   ];
 
   return (

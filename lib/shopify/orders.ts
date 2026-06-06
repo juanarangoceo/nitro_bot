@@ -76,6 +76,13 @@ export async function createCodOrder(params: {
 
   // 1) Resolver variant id + precio desde el catálogo local (server-side).
   const lineItems: { variantId: string; quantity: number }[] = [];
+  // Detalle por línea para persistir en order_items (métricas de producto).
+  const resolvedItems: {
+    shopifyId: string;
+    title: string | null;
+    unitPrice: number;
+    quantity: number;
+  }[] = [];
   let subtotal = 0;
   for (const it of items) {
     const { data: prod } = await supabase
@@ -89,8 +96,15 @@ export async function createCodOrder(params: {
       return { ok: false, error: `Producto ${it.producto_id} sin variante sincronizada.` };
     }
     const cantidad = Math.max(1, Number(it.cantidad) || 1);
-    subtotal += Number(prod.price ?? 0) * cantidad;
+    const unitPrice = Number(prod.price ?? 0);
+    subtotal += unitPrice * cantidad;
     lineItems.push({ variantId: prod.shopify_variant_id, quantity: cantidad });
+    resolvedItems.push({
+      shopifyId: String(it.producto_id),
+      title: prod.title,
+      unitPrice,
+      quantity: cantidad,
+    });
   }
   if (!cliente.direccion?.trim()) {
     return { ok: false, error: "Falta la dirección de entrega del cliente." };
@@ -153,13 +167,31 @@ export async function createCodOrder(params: {
     { tenant_id: tenantId, phone, name: cliente.nombre, city: cliente.ciudad },
     { onConflict: "tenant_id,phone" }
   );
-  await supabase.from("orders").insert({
-    tenant_id: tenantId,
-    conversation_id: conversationId ?? null,
-    shopify_order_id: shopifyOrderId,
-    total,
-    channel: "bot",
-  });
+  const { data: orderRow } = await supabase
+    .from("orders")
+    .insert({
+      tenant_id: tenantId,
+      conversation_id: conversationId ?? null,
+      shopify_order_id: shopifyOrderId,
+      total,
+      channel: "bot",
+    })
+    .select("id")
+    .single();
+
+  // Líneas de la orden para métricas de "productos más vendidos".
+  if (orderRow) {
+    await supabase.from("order_items").insert(
+      resolvedItems.map((ri) => ({
+        tenant_id: tenantId,
+        order_id: orderRow.id,
+        shopify_product_id: ri.shopifyId,
+        title: ri.title,
+        quantity: ri.quantity,
+        unit_price: ri.unitPrice,
+      }))
+    );
+  }
 
   return {
     ok: true,

@@ -23,6 +23,7 @@ import {
   type WaValue,
   type DownloadedMedia,
 } from "../whatsapp/meta";
+import { uploadWaMedia } from "../storage";
 import type { Tenant, TenantSecrets } from "../tenant";
 
 const DEBOUNCE_MS = 8_000;
@@ -178,6 +179,26 @@ export async function processInboundMessage(params: {
   // Descarga de media (audio/imagen) para el turno multimodal actual.
   const media = shaped.mediaId ? await downloadMedia(wa, shaped.mediaId) : null;
 
+  // Persistir la media entrante en Storage para poder mostrarla/oírla luego en
+  // el panel de conversaciones (best-effort: no bloquea la respuesta del bot).
+  if (media) {
+    try {
+      const path = await uploadWaMedia({
+        tenantId: tenant.id,
+        conversationId,
+        messageId: currentMessageId,
+        bytes: Buffer.from(media.base64, "base64"),
+        mimeType: media.mimeType,
+      });
+      await supabase
+        .from("messages")
+        .update({ media_path: path, media_mime: media.mimeType })
+        .eq("id", currentMessageId);
+    } catch (e) {
+      console.error("[worker] no se pudo persistir media entrante:", e);
+    }
+  }
+
   // 3) Debounce: esperar y coalescer. Si tras la espera llegó un mensaje más
   //    nuevo del cliente, esa invocación se encargará; esta aborta.
   await sleep(DEBOUNCE_MS);
@@ -239,9 +260,26 @@ export async function processInboundMessage(params: {
       ? { domain: tenant.shopify_domain, accessToken: secrets.shopify_access_token }
       : undefined;
 
-  const result = await runAssistant({ tenant, conversationId, shopify, contents });
+  const result = await runAssistant({
+    tenant,
+    conversationId,
+    shopify,
+    wa,
+    customerPhone: phone,
+    contents,
+  });
   const reply = result.text?.trim();
-  if (!reply) return; // p.ej. solo se escaló; nada que enviar.
+  if (!reply) {
+    // Sin texto: puede ser legítimo (solo se escaló o se envió una imagen) o el
+    // bug de respuesta vacía de Gemini. Logueamos para que NO sea invisible en
+    // Vercel (ver nota de Gemini 3.x en CLAUDE.md).
+    console.warn(
+      `[worker] runAssistant sin texto (tenant=${tenant.id} conv=${conversationId} tools=${result.toolTrace
+        .map((t) => t.name)
+        .join(",")})`
+    );
+    return;
+  }
 
   // 7) Enviar por WhatsApp y persistir la respuesta del bot (idempotente por su wamid).
   const outboundId = await sendText(wa, phone, reply);

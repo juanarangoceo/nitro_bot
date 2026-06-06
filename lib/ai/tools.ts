@@ -6,6 +6,7 @@
 import { createAdminClient } from "../supabase/admin";
 import { searchProducts } from "./rag";
 import { createCodOrder, type OrderItem, type CustomerData } from "../shopify/orders";
+import { sendImage, type WaCreds } from "../whatsapp/meta";
 import type { ShopifyCreds } from "../shopify/client";
 import type { Tenant } from "../tenant";
 
@@ -13,6 +14,10 @@ export type ToolContext = {
   tenant: Tenant;
   conversationId?: string;
   shopify?: ShopifyCreds;
+  // Credenciales y destinatario para enviar media al cliente durante el turno
+  // (las inyecta el worker; el editor de prueba las omite => no-op).
+  wa?: WaCreds;
+  customerPhone?: string;
 };
 
 // --- Declaraciones para Gemini (subset OpenAPI) ---------------------------
@@ -99,6 +104,22 @@ export const toolDeclarations = [
         },
       },
       required: ["items", "datos_cliente"],
+    },
+  },
+  {
+    name: "enviar_imagen_producto",
+    description:
+      "Envía al cliente la foto de un producto del catálogo por WhatsApp. Úsala cuando recomiendes un producto y convenga que el cliente lo vea. Pasa el shopify_id (campo 'id' que devuelve buscar_productos).",
+    parameters: {
+      type: "object",
+      properties: {
+        producto_id: { type: "string", description: "shopify_id del producto." },
+        mensaje: {
+          type: "string",
+          description: "Texto corto opcional que acompaña la foto (caption).",
+        },
+      },
+      required: ["producto_id"],
     },
   },
   {
@@ -201,6 +222,47 @@ async function crearOrden(ctx: ToolContext, args: Args) {
   });
 }
 
+// Envía la foto del producto al cliente por WhatsApp (link = imagen de Shopify).
+// Persiste un mensaje saliente del bot (msg_type image). En el sandbox del editor
+// (sin wa/customerPhone) hace no-op y lo reporta.
+async function enviarImagenProducto(ctx: ToolContext, args: Args) {
+  const productoId = String(args.producto_id ?? "");
+  const caption = args.mensaje ? String(args.mensaje) : undefined;
+  const supabase = createAdminClient();
+  const { data: prod } = await supabase
+    .from("products")
+    .select("title, image_url")
+    .eq("tenant_id", ctx.tenant.id)
+    .eq("shopify_id", productoId)
+    .maybeSingle();
+  if (!prod) return { enviado: false, error: "Producto no encontrado." };
+  if (!prod.image_url) return { enviado: false, error: "El producto no tiene imagen." };
+
+  if (!ctx.wa || !ctx.customerPhone || !ctx.conversationId) {
+    // Sandbox del editor: no hay a quién enviar.
+    return { enviado: false, nota: "sin_destinatario_dev", imagen: prod.image_url };
+  }
+
+  try {
+    const waId = await sendImage(ctx.wa, ctx.customerPhone, {
+      link: prod.image_url,
+      caption,
+    });
+    await supabase.from("messages").insert({
+      tenant_id: ctx.tenant.id,
+      conversation_id: ctx.conversationId,
+      wa_message_id: waId,
+      sender: "bot",
+      msg_type: "image",
+      content: caption ?? `[foto] ${prod.title ?? ""}`.trim(),
+      media_url: prod.image_url,
+    });
+    return { enviado: true, titulo: prod.title };
+  } catch (e) {
+    return { enviado: false, error: (e as Error).message };
+  }
+}
+
 async function escalarAHumano(ctx: ToolContext, args: Args) {
   const motivo = String(args.motivo ?? "otro");
   if (!ctx.conversationId) {
@@ -228,6 +290,7 @@ const HANDLERS: Record<string, (ctx: ToolContext, args: Args) => unknown> = {
   ver_historial_cliente: verHistorialCliente,
   calcular_envio: calcularEnvio,
   crear_orden: crearOrden,
+  enviar_imagen_producto: enviarImagenProducto,
   escalar_a_humano: escalarAHumano,
 };
 

@@ -115,10 +115,10 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   (`app/actions/auth.ts`). Layout protegido con nav por `tenants.modules`
   (`lib/dashboard/context.ts` resuelve usuario→tenant vía RLS). Vistas: **Inicio**
   (consumo del mes con alerta al 80%), **Métricas**, **CRM** + export CSV
-  (`/dashboard/crm/export`), **Editor del asesor** (edita `system_prompt` +
-  chat de prueba con `runAssistant`), **Tickets** en vivo (Realtime: lista +
+  (`/dashboard/crm/export`), **Tickets** en vivo (Realtime: lista +
   conversación; responder por WhatsApp pasa a `human_active`; resolver vuelve a
-  `bot_active`). Migración #5 habilitó Realtime (respeta RLS) en
+  `bot_active`). El **editor del asesor se movió a `/admin`** (v2): el cliente
+  ya NO edita su prompt. Migración #5 habilitó Realtime (respeta RLS) en
   `tickets`/`messages`/`conversations`. Usuarios del dashboard vía
   `npm run seed:dashboard-user`. **Verificado**: sign-in OK; **RLS aísla** (un
   usuario solo ve su tenant); `tenant_secrets` invisible para `authenticated` (sin
@@ -135,10 +135,50 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   comprobaciones en verde (secretos descifran, RAG devuelve productos, función de
   reseteo, RLS aísla + `tenant_secrets` oculto).
 
+- **v2 — Panel de Plataforma + multimedia + métricas (construido, typecheck/build
+  verde, `verify` 4/4)**: NO desplegado/probado en vivo aún. Detalle:
+  - **Migración #8** (`0008_platform_panel.sql`): `platform_admins` y `audit_log`
+    (RLS activado SIN políticas + revoke a authenticated — solo `service_role`);
+    columnas en `tenants` (`plan`, `monthly_fee`, `wa_display_name`,
+    `wa_profile_photo_url`); `order_items` (RLS por tenant, para productos más
+    vendidos); `messages.media_path`/`media_mime`. **Migración #9**: bucket
+    privado `wa-media` en Storage.
+  - **`lib/provisioning/*`**: lógica de los scripts extraída a funciones
+    compartidas (`upsertTenant`, `runBackfill`, `registerShopifyWebhooks`,
+    `seedWaCreds`, `seedDashboardUser`, `runVerify`, `provisionTenant`). Los 6
+    scripts `seed:*`/`verify`/`backfill`/`register` son ahora wrappers delgados.
+  - **Panel `/admin`** (super-admin, gate explícito con `service_role` en
+    `lib/admin/context.ts`, NO RLS): lista de clientes con consumo/estado,
+    **alta con un botón** (`provisionTenant` orquesta los 9 pasos del spec, idempotente,
+    audita), detalle (editar plan/fee/límite, pausar/activar, **editar prompt aquí**,
+    rotar credenciales, **suscribir WABA + configurar perfil de WhatsApp** sin tocar
+    Meta, auditoría), resumen de plataforma (MRR, ventas, gasto por
+    cliente). Toda acción de `/admin` re-verifica super-admin y escribe `audit_log`.
+  - **Multimedia**: el bot envía fotos de producto vía herramienta
+    `enviar_imagen_producto` (la IA decide); recibe audios/imágenes y los persiste
+    en Storage. El agente envía fotos/audios desde Tickets (`sendMediaFromAgent`).
+    Media servida al navegador vía `app/dashboard/media/[id]` (firma URLs del bucket
+    privado, verifica tenant por RLS).
+  - **Conversaciones en vivo (solo lectura)** en el dashboard del cliente
+    (`/dashboard/conversations`, Realtime).
+  - **Métricas**: "productos más vendidos" con filtro semana/mes (sobre `order_items`,
+    que ahora persiste `createCodOrder`).
+  - **Ruteo por rol**: tras login, super-admin → `/admin`, cliente → `/dashboard`
+    (`isPlatformAdmin`). `/login` autenticado → `/` (rutea por rol). `proxy.ts`
+    protege `/admin`.
+
 ### 🔜 Pendiente
 - **Vercel**: agregar `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  (dashboard) y `CRON_SECRET` (cron). Redeploy.
-- **Editor — historial/rollback** del prompt (follow-up; hoy solo edita + prueba).
+  (dashboard/Realtime), `CRON_SECRET` (cron), `APP_BASE_URL`/`WEBHOOK_BASE_URL`
+  (alta: registra webhooks de Shopify) y, opcional, `META_APP_ID` (subida de la
+  foto de perfil de WhatsApp en el alta). Redeploy.
+- **Crear el primer super-admin**: `npm run seed:platform-admin`
+  (`SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`). No hay UI para el primero.
+- **Probar v2 en vivo**: alta de un cliente dev con el botón (9 pasos en verde),
+  multimedia (audio entrante visible, foto de producto saliente, agente enviando
+  foto/audio), conversaciones en vivo y métricas de producto.
+- **Verificación de negocio en Meta**: destraba el tope de 2→20 números. Por cada
+  número nuevo, Meta revisa el display name (trámite aparte).
 - **Inventory-level webhook** (opcional): `inventory_levels/update` necesita un
   handler aparte (su payload trae `inventory_item_id`, no el product id). Hoy el
   stock se refresca vía `products/update`.
@@ -173,9 +213,15 @@ app/dashboard/layout.tsx            layout protegido + nav por módulos
 app/dashboard/page.tsx              Inicio: consumo del mes (alerta 80%)
 app/dashboard/metrics/page.tsx      métricas (conversaciones, órdenes, ventas)
 app/dashboard/crm/(page|export)     CRM + exportación CSV (RLS)
-app/dashboard/editor/*              editor del system_prompt + chat de prueba
-app/dashboard/tickets/*             tickets en vivo (Realtime + responder/resolver)
-proxy.ts                            Next 16: refresca sesión + protege /dashboard
+app/dashboard/conversations/*       conversaciones en vivo (solo lectura, Realtime)
+app/dashboard/media/[id]/route.ts   sirve media del bucket privado (firma URL, RLS)
+app/dashboard/tickets/*             tickets en vivo (responder/resolver + enviar foto/audio)
+app/admin/*                         Panel de Plataforma (super-admin): clientes,
+                                    alta con un botón, detalle, resumen, actions
+lib/admin/context.ts                gate super-admin (service_role, NO RLS) + audit_log
+lib/provisioning/*                  aprovisionamiento compartido CLI↔panel (provisionTenant)
+lib/storage.ts                      Supabase Storage de media (subir + firmar URL)
+proxy.ts                            Next 16: refresca sesión + protege /dashboard y /admin
 lib/dashboard/context.ts            resuelve usuario→tenant (RLS) del dashboard
 lib/supabase/server.ts              cliente SSR authenticated (RLS) del dashboard
 lib/supabase/client.ts              cliente de navegador (Realtime)
@@ -213,6 +259,7 @@ SEED_WA_PHONE_NUMBER_ID=... SEED_WA_TOKEN=... npm run seed:wa
 SEED_SHOP_DOMAIN=... npm run backfill:catalog
 WEBHOOK_BASE_URL=https://...vercel.app npm run register:shopify-webhooks
 SEED_USER_EMAIL=... SEED_USER_PASSWORD=... npm run seed:dashboard-user
+SEED_ADMIN_EMAIL=... SEED_ADMIN_PASSWORD=... npm run seed:platform-admin  # 1er super-admin
 npm run verify              # suite de verificación (RAG + fuga RLS, no muta)
 npx tsc --noEmit            # typecheck
 ```
