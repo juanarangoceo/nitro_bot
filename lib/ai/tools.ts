@@ -131,7 +131,7 @@ export const toolDeclarations = [
       properties: {
         motivo: {
           type: "string",
-          description: "reclamo | fuera_de_catalogo | pide_humano | audio | otro",
+          description: "reclamo | fuera_de_catalogo | pide_humano | otro",
         },
       },
       required: ["motivo"],
