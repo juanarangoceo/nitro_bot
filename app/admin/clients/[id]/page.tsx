@@ -4,6 +4,17 @@ import { getPlatformAdminContext } from "@/lib/admin/context";
 import { setTenantActive, updateTenantCommercial } from "../../actions";
 import { PromptEditor, RotateShopify, RotateWa, ConfigureWa } from "./detail-forms";
 
+function CredFlag({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <li className="flex items-center justify-between text-xs">
+      <span className="text-neutral-600">{label}</span>
+      <span className={ok ? "text-emerald-600" : "text-amber-600"}>
+        {ok ? "configurado ✅" : "falta ⚠️"}
+      </span>
+    </li>
+  );
+}
+
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
@@ -29,6 +40,21 @@ export default async function ClientDetailPage({
     .eq("id", id)
     .maybeSingle();
   if (!t) notFound();
+
+  // Estado de credenciales: SOLO presencia (booleanos), nunca los valores. Los
+  // tokens cifrados jamás llegan al navegador (regla no negociable).
+  const { data: sec } = await admin
+    .from("tenant_secrets")
+    .select("shopify_access_token, shopify_webhook_secret, wa_access_token")
+    .eq("tenant_id", id)
+    .maybeSingle();
+  const creds = {
+    shopifyToken: !!sec?.shopify_access_token,
+    shopifySecret: !!sec?.shopify_webhook_secret,
+    waToken: !!sec?.wa_access_token,
+    wabaId: !!t.wa_business_account_id,
+    phoneId: !!t.wa_phone_number_id,
+  };
 
   const { data: audit } = await admin
     .from("audit_log")
@@ -123,6 +149,18 @@ export default async function ClientDetailPage({
 
         <Card title="Rotar credenciales">
           <div className="space-y-4">
+            <div className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
+              <p className="mb-2 text-xs font-medium text-neutral-700">
+                Estado actual (los valores cifrados nunca se muestran)
+              </p>
+              <ul className="space-y-1">
+                <CredFlag label="Shopify · access token" ok={creds.shopifyToken} />
+                <CredFlag label="Shopify · API secret (HMAC)" ok={creds.shopifySecret} />
+                <CredFlag label="WhatsApp · phone_number_id" ok={creds.phoneId} />
+                <CredFlag label="WhatsApp · token" ok={creds.waToken} />
+                <CredFlag label="WhatsApp · WABA ID" ok={creds.wabaId} />
+              </ul>
+            </div>
             <RotateShopify tenantId={t.id} slug={t.slug ?? ""} name={t.name} />
             <hr className="border-neutral-100" />
             <RotateWa tenantId={t.id} slug={t.slug ?? ""} />
