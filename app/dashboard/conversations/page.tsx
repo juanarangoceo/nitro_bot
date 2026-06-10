@@ -5,9 +5,11 @@ export default async function ConversationsPage() {
   const { supabase } = await getDashboardContext();
 
   // Conversaciones del tenant (RLS), las de actividad más reciente primero.
+  // Las de prueba del probador (/admin) no se muestran al cliente (is_test).
   const { data } = await supabase
     .from("conversations")
     .select("id, customer_phone, status, last_customer_message_at, created_at")
+    .eq("is_test", false)
     .order("last_customer_message_at", { ascending: false, nullsFirst: false })
     .limit(100);
 

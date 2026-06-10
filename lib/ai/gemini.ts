@@ -68,11 +68,12 @@ export async function runAssistant(params: {
   shopify?: ShopifyCreds;
   wa?: WaCreds;
   customerPhone?: string;
+  testMode?: boolean;
   contents: Content[];
 }): Promise<AssistantResult> {
-  const { tenant, conversationId, shopify, wa, customerPhone, contents } = params;
+  const { tenant, conversationId, shopify, wa, customerPhone, testMode, contents } = params;
   const systemPrompt = buildSystemPrompt(tenant);
-  const ctx: ToolContext = { tenant, conversationId, shopify, wa, customerPhone };
+  const ctx: ToolContext = { tenant, conversationId, shopify, wa, customerPhone, testMode };
   const working: Content[] = [...contents];
   const toolTrace: AssistantResult["toolTrace"] = [];
 

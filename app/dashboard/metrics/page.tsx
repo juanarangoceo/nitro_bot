@@ -33,17 +33,23 @@ export default async function MetricsPage({
   const period: Period = sp.period === "week" ? "week" : "month";
   const since = periodStart(period);
 
+  // Las conversaciones de prueba del probador (/admin) no cuentan (is_test).
   const [conversations, botActive, requiresHuman, ordersInPeriod, customers, items] =
     await Promise.all([
-      supabase.from("conversations").select("id", { count: "exact", head: true }),
       supabase
         .from("conversations")
         .select("id", { count: "exact", head: true })
-        .eq("status", "bot_active"),
+        .eq("is_test", false),
       supabase
         .from("conversations")
         .select("id", { count: "exact", head: true })
-        .eq("status", "requires_human"),
+        .eq("status", "bot_active")
+        .eq("is_test", false),
+      supabase
+        .from("conversations")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "requires_human")
+        .eq("is_test", false),
       supabase.from("orders").select("total, created_at").gte("created_at", since),
       supabase.from("customers").select("id", { count: "exact", head: true }),
       supabase

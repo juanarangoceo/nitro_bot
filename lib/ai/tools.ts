@@ -19,6 +19,10 @@ export type ToolContext = {
   // (las inyecta el worker; el editor de prueba las omite => no-op).
   wa?: WaCreds;
   customerPhone?: string;
+  // Probador del /admin: las herramientas corren de verdad (RAG, stock,
+  // imágenes) EXCEPTO crear_orden (simulada, sin tocar Shopify) y
+  // escalar_a_humano (marca el resultado sin crear ticket real).
+  testMode?: boolean;
 };
 
 // --- Declaraciones para Gemini (subset OpenAPI) ---------------------------
@@ -210,6 +214,29 @@ async function crearOrden(ctx: ToolContext, args: Args) {
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, error: "Sin items." };
   }
+  // Modo test (probador del /admin): el total se calcula igual (server-side,
+  // desde el catálogo) pero NO se crea nada en Shopify ni en orders.
+  if (ctx.testMode) {
+    const supabase = createAdminClient();
+    let subtotal = 0;
+    for (const it of items) {
+      const { data: prod } = await supabase
+        .from("products")
+        .select("price")
+        .eq("tenant_id", ctx.tenant.id)
+        .eq("shopify_id", String(it.producto_id))
+        .maybeSingle();
+      if (!prod) return { ok: false, error: `Producto ${it.producto_id} no existe.` };
+      subtotal += Number(prod.price ?? 0) * Math.max(1, Number(it.cantidad) || 1);
+    }
+    const envio = calcularEnvio(ctx, { total_pedido: subtotal }) as { costo_envio: number };
+    return {
+      ok: true,
+      simulada: true,
+      total: subtotal + envio.costo_envio,
+      nota: "Orden de PRUEBA: no se creó en Shopify.",
+    };
+  }
   if (!ctx.shopify) {
     return { ok: false, error: "Credenciales de la tienda no disponibles en el contexto." };
   }
@@ -266,6 +293,10 @@ async function enviarImagenProducto(ctx: ToolContext, args: Args) {
 
 async function escalarAHumano(ctx: ToolContext, args: Args) {
   const motivo = String(args.motivo ?? "otro");
+  if (ctx.testMode) {
+    // Probador: se marca el resultado en la UI sin crear ticket real.
+    return { escalado: true, motivo, simulado: true };
+  }
   if (!ctx.conversationId) {
     // Modo dev sin conversación real: solo confirmamos.
     return { escalado: true, motivo, nota: "sin_conversacion_dev" };
