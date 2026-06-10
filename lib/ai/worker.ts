@@ -157,9 +157,13 @@ export async function processInboundMessage(params: {
   const contactName = value.contacts?.[0]?.profile?.name ?? null;
 
   // 1) Conversación: obtener-o-crear sin pisar el estado existente (no des-escalar).
+  //    Excepción: una conversación CERRADA se reactiva a bot_active cuando el
+  //    cliente vuelve a escribir. closed_at se conserva como corte de contexto:
+  //    el historial que ve la IA excluye lo anterior al cierre (el dato
+  //    histórico no se borra; métricas y CRM intactos).
   let { data: conv } = await supabase
     .from("conversations")
-    .select("id, status")
+    .select("id, status, closed_at")
     .eq("tenant_id", tenant.id)
     .eq("customer_phone", phone)
     .maybeSingle();
@@ -176,7 +180,7 @@ export async function processInboundMessage(params: {
         },
         { onConflict: "tenant_id,customer_phone", ignoreDuplicates: false }
       )
-      .select("id, status")
+      .select("id, status, closed_at")
       .single();
     if (error || !inserted) {
       console.error(`[worker] no se pudo crear conversación:`, error);
@@ -184,12 +188,16 @@ export async function processInboundMessage(params: {
     }
     conv = inserted;
   } else {
-    await supabase
-      .from("conversations")
-      .update({ last_customer_message_at: new Date().toISOString() })
-      .eq("id", conv.id);
+    const update: Record<string, unknown> = {
+      last_customer_message_at: new Date().toISOString(),
+    };
+    if (conv.status === "closed") {
+      update.status = "bot_active"; // reactivación; closed_at queda como corte
+    }
+    await supabase.from("conversations").update(update).eq("id", conv.id);
   }
   const conversationId = conv.id;
+  const historyCutoff = conv.closed_at; // null si nunca se cerró
 
   // Mantén el CRM mínimo al día (nombre del contacto). Best-effort.
   if (contactName) {
@@ -297,12 +305,16 @@ export async function processInboundMessage(params: {
   // MAX_HISTORY mensajes la ventana se quedaba clavada en los primeros: el turno
   // actual del cliente nunca entraba y el contexto terminaba en un turno del
   // modelo → Gemini respondía vacío y el bot dejaba de contestar.
-  const { data: recent } = await supabase
+  // Si la conversación se cerró en algún momento, el contexto arranca limpio:
+  // solo mensajes posteriores al último cierre (closed_at).
+  let historyQuery = supabase
     .from("messages")
     .select("id, sender, content")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(MAX_HISTORY);
+  if (historyCutoff) historyQuery = historyQuery.gt("created_at", historyCutoff);
+  const { data: recent } = await historyQuery;
   const history = (recent ?? []).reverse();
 
   const contents = buildContents(history, currentMessageId, media);

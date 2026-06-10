@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
+import { closeConversation } from "./actions";
 
 export type ConversationRow = {
   id: string;
@@ -166,7 +167,31 @@ export function ConversationsClient({
         <div className="flex min-h-[480px] flex-col rounded-2xl border border-neutral-200 bg-white">
           <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
             <p className="text-sm font-medium text-neutral-900">{selected.customer_phone}</p>
-            <StatusBadge status={selected.status} />
+            <div className="flex items-center gap-2">
+              <StatusBadge status={selected.status} />
+              {selected.status !== "closed" && (
+                <form
+                  action={closeConversation}
+                  onSubmit={(e) => {
+                    if (
+                      !confirm(
+                        "¿Cerrar esta conversación? Si el cliente vuelve a escribir, el asesor arranca de cero (sin el contexto anterior). El historial no se borra."
+                      )
+                    ) {
+                      e.preventDefault();
+                    }
+                  }}
+                >
+                  <input type="hidden" name="conversation_id" value={selected.id} />
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
+                  >
+                    Cerrar conversación
+                  </button>
+                </form>
+              )}
+            </div>
           </div>
           <div className="flex-1 space-y-2 overflow-auto p-4">
             {messages.map((m) => (
