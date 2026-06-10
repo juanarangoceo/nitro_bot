@@ -53,6 +53,11 @@ async function generate(model: string, systemPrompt: string, contents: Content[]
 export type AssistantResult = {
   text: string;
   toolTrace: { name: string; args: unknown; response: unknown }[];
+  // true si el loop agotó MAX_TOOL_ROUNDS sin respuesta final: el asesor quedó
+  // trabado (p. ej. una herramienta falla en bucle). El worker escala a humano
+  // en lugar de dejar al cliente en un callejón sin salida. Opcional para no
+  // cambiar el contrato de los llamadores que no la usan.
+  exhausted?: boolean;
 };
 
 // Ejecuta el asesor sobre el historial dado y devuelve el texto final + la
@@ -108,5 +113,6 @@ export async function runAssistant(params: {
   return {
     text: "Disculpa, no logré completar la respuesta. ¿Me lo repites?",
     toolTrace,
+    exhausted: true,
   };
 }

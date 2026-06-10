@@ -5,6 +5,7 @@
 
 import { createAdminClient } from "../supabase/admin";
 import { searchProducts } from "./rag";
+import { escalateToHuman } from "./escalation";
 import { createCodOrder, type OrderItem, type CustomerData } from "../shopify/orders";
 import { sendImage, type WaCreds } from "../whatsapp/meta";
 import type { ShopifyCreds } from "../shopify/client";
@@ -269,17 +270,10 @@ async function escalarAHumano(ctx: ToolContext, args: Args) {
     // Modo dev sin conversación real: solo confirmamos.
     return { escalado: true, motivo, nota: "sin_conversacion_dev" };
   }
-  const supabase = createAdminClient();
-  await supabase
-    .from("conversations")
-    .update({ status: "requires_human" })
-    .eq("id", ctx.conversationId)
-    .eq("tenant_id", ctx.tenant.id);
-  await supabase.from("tickets").insert({
-    tenant_id: ctx.tenant.id,
-    conversation_id: ctx.conversationId,
+  await escalateToHuman({
+    tenantId: ctx.tenant.id,
+    conversationId: ctx.conversationId,
     reason: motivo,
-    status: "open",
   });
   return { escalado: true, motivo };
 }

@@ -13,7 +13,9 @@
 //  - Precios/totales jamás los fija la IA (eso vive en lib/ai/tools.ts).
 
 import { createAdminClient } from "../supabase/admin";
-import { runAssistant, type Content, type GeminiPart } from "./gemini";
+import { runAssistant, type AssistantResult, type Content, type GeminiPart } from "./gemini";
+import { escalateToHuman } from "./escalation";
+import { logEvent, summarizeToolTrace } from "../ops/events";
 import {
   sendText,
   markAsRead,
@@ -79,6 +81,56 @@ function buildContents(
       return { role, parts };
     }
     return { role, parts: [{ text: r.content ?? "" }] };
+  });
+}
+
+// Mensaje cálido y resolutivo cuando el asesor queda trabado (NUNCA el
+// "¿me lo repites?" en bucle): se escala y se le dice al cliente qué sigue.
+const TECH_FAILURE_REPLY =
+  "Dame un momento, voy a conectarte con una persona del equipo para ayudarte con esto. 🙂";
+
+// Escalado automático por fallo técnico: ticket + aviso al cliente + traza en
+// event_log. Cada paso es best-effort: el fallo de uno no impide los demás.
+async function escalateTechnicalFailure(params: {
+  tenant: Tenant;
+  conversationId: string;
+  wa: WaCreds;
+  phone: string;
+  detail: unknown;
+}): Promise<void> {
+  const { tenant, conversationId, wa, phone, detail } = params;
+  const supabase = createAdminClient();
+
+  try {
+    await escalateToHuman({
+      tenantId: tenant.id,
+      conversationId,
+      reason: "fallo_tecnico",
+    });
+  } catch (e) {
+    console.error("[worker] escalado por fallo técnico no se pudo registrar:", e);
+  }
+
+  try {
+    const outboundId = await sendText(wa, phone, TECH_FAILURE_REPLY);
+    await supabase.from("messages").insert({
+      tenant_id: tenant.id,
+      conversation_id: conversationId,
+      wa_message_id: outboundId,
+      sender: "bot",
+      msg_type: "text",
+      content: TECH_FAILURE_REPLY,
+    });
+  } catch (e) {
+    console.error("[worker] no se pudo avisar al cliente del escalado:", e);
+  }
+
+  await logEvent({
+    kind: "escalation_auto",
+    severity: "error",
+    tenantId: tenant.id,
+    conversationId,
+    detail,
   });
 }
 
@@ -260,14 +312,57 @@ export async function processInboundMessage(params: {
       ? { domain: tenant.shopify_domain, accessToken: secrets.shopify_access_token }
       : undefined;
 
-  const result = await runAssistant({
-    tenant,
-    conversationId,
-    shopify,
-    wa,
-    customerPhone: phone,
-    contents,
-  });
+  // Escalado automático por fallo técnico (Feature A de la spec de operación):
+  // si runAssistant lanza o agota el loop de herramientas, el cliente NO queda
+  // en un callejón sin salida ("¿me lo repites?" en bucle): se escala a humano
+  // con ticket, se le avisa con un mensaje resolutivo y queda la traza en
+  // event_log para diagnóstico.
+  let result: AssistantResult;
+  try {
+    result = await runAssistant({
+      tenant,
+      conversationId,
+      shopify,
+      wa,
+      customerPhone: phone,
+      contents,
+    });
+  } catch (e) {
+    console.error(`[worker] runAssistant lanzó (tenant=${tenant.id} conv=${conversationId}):`, e);
+    await logEvent({
+      kind: "assistant_error",
+      severity: "error",
+      tenantId: tenant.id,
+      conversationId,
+      detail: { message: (e as Error).message },
+    });
+    await escalateTechnicalFailure({ tenant, conversationId, wa, phone, detail: { message: (e as Error).message } });
+    return;
+  }
+
+  if (result.exhausted) {
+    await escalateTechnicalFailure({
+      tenant,
+      conversationId,
+      wa,
+      phone,
+      detail: { tool_trace: summarizeToolTrace(result.toolTrace) },
+    });
+    return;
+  }
+
+  // Observabilidad (Feature B): persistir la traza de herramientas del turno.
+  // Best-effort y solo si hubo herramientas (trazas vacías no se insertan).
+  if (result.toolTrace.length > 0) {
+    await logEvent({
+      kind: "tool_trace",
+      severity: "info",
+      tenantId: tenant.id,
+      conversationId,
+      detail: { tools: summarizeToolTrace(result.toolTrace) },
+    });
+  }
+
   const reply = result.text?.trim();
   if (!reply) {
     // Sin texto: puede ser legítimo (solo se escaló o se envió una imagen) o el
