@@ -167,7 +167,48 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     (`isPlatformAdmin`). `/login` autenticado → `/` (rutea por rol). `proxy.ts`
     protege `/admin`.
 
+- **Spec 07 — Operación y Robustez (parcial, typecheck/build/verify 4/4 verdes,
+  NO probado en vivo)**: migración #10 (`event_log` solo-service_role,
+  `tenants.notification_email`, `conversations.is_test` y `closed_at`).
+  **A** — escalado automático: `runAssistant` señala `exhausted`; el worker, ante
+  agotamiento o excepción, escala con la lógica compartida `lib/ai/escalation.ts`
+  (la misma de `escalar_a_humano`), responde un mensaje resolutivo y deja la traza
+  en `event_log` (`escalation_auto`/`assistant_error`). **B** — observabilidad:
+  `tool_trace` por turno, `queue_failure` en `lib/queue.ts`, vista `/admin/health`
+  (errores 24h, filtros, paginación), visor `/admin/conversations/[id]` con borrado
+  de conversaciones de prueba, retención de event_log en el cron mensual (90d/30d
+  info). **E** — contraseñas: reset desde `/admin` (temporal mostrada una vez,
+  auditada) y "Mi cuenta" en el dashboard (cambio re-autenticando). **F** — cerrar
+  conversación (dashboard) con `closed_at` como corte: el worker REACTIVA una
+  conversación `closed` cuando el cliente escribe y el historial a Gemini excluye
+  lo anterior al cierre. **G** — probador `/admin/tester` (testMode: orden simulada
+  con total server-side, escalado sin ticket, fotos en la UI, sin WhatsApp ni
+  contador; `is_test` fuera de métricas y de la vista del cliente).
+  **Diferidas: C (alertas Telegram), D (correo Resend) y H (backup a Drive)** —
+  la spec vive en Drive (`07-Nitro-Bot-Spec-Operacion-Claude-Code.md`).
+
+- **Spec 08 — OAuth de Shopify (construida, NO probada en vivo)**: migración #11
+  (`shopify_client_id`/`shopify_client_secret` en `tenant_secrets`,
+  `shopify_oauth_states`). `lib/shopify/oauth.ts` (scopes en constante única,
+  HMAC de query en tiempo constante, intercambio de code, `write_X` satisface
+  `read_X`). Rutas `/api/shopify/oauth/start` (gate super-admin, state 32 bytes
+  un solo uso/10 min) y `/callback` (pública: state→expiración→HMAC→shop exacto→
+  consumo atómico→intercambio→scopes→guardar cifrado; `shopify_webhook_secret`
+  pasa a ser el client secret, coherente con el HMAC del webhook; webhooks +
+  backfill en segundo plano; fallos a `event_log` `oauth_failure`). En `/admin`:
+  sección "Conexión Shopify (OAuth)" en el detalle; el alta acepta client_id/secret
+  como alternativa al token manual (pasos Shopify quedan en ámbar "Pendiente:
+  conectar"). Probar requiere `APP_BASE_URL` en Vercel y una app del Dev Dashboard
+  con flujo de instalación heredado.
+
 ### 🔜 Pendiente
+- **Spec 07 diferidas**: Feature C (Telegram `lib/notify/telegram.ts` +
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`), Feature D (Resend
+  `lib/notify/email.ts` + `RESEND_API_KEY`/`NOTIFY_FROM_EMAIL`; la columna
+  `notification_email` ya existe), Feature H (backup semanal a Drive).
+  Engancharlas en `lib/ai/escalation.ts` (punto único de tickets) y `event_log`.
+- **Probar en vivo spec 07 y 08** (escalado por fallo, /admin/health, probador,
+  flujo OAuth completo con una app del Dev Dashboard).
 - **Vercel**: agregar `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
   (dashboard/Realtime), `CRON_SECRET` (cron), `APP_BASE_URL`/`WEBHOOK_BASE_URL`
   (alta: registra webhooks de Shopify) y, opcional, `META_APP_ID` (subida de la
