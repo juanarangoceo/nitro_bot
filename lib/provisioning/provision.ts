@@ -27,10 +27,13 @@ export type ProvisionInput = {
   monthlyFee?: number | null;
   messageLimit?: number | null;
   systemPrompt?: string;
-  // Shopify
+  // Shopify: token manual (compatibilidad) O par client_id/client_secret de la
+  // app del Dev Dashboard (la conexión OAuth se hace luego desde el detalle).
   shopifyDomain: string;
-  shopifyAccessToken: string;
-  shopifyApiSecret: string;
+  shopifyAccessToken?: string;
+  shopifyApiSecret?: string;
+  shopifyClientId?: string;
+  shopifyClientSecret?: string;
   // WhatsApp
   waPhoneNumberId: string;
   waToken: string;
@@ -47,7 +50,9 @@ export type ProvisionInput = {
   userPassword: string;
 };
 
-export type ProvisionStep = { name: string; ok: boolean; detail: string };
+// pending: el paso no falló, quedó a la espera de una acción posterior (ámbar
+// en el panel) — p. ej. backfill/webhooks cuando Shopify se conectará por OAuth.
+export type ProvisionStep = { name: string; ok: boolean; detail: string; pending?: boolean };
 export type ProvisionResult = {
   ok: boolean;
   tenantId: string | null;
@@ -73,6 +78,12 @@ export async function provisionTenant(
     }
   };
 
+  // ¿Hay token de Shopify ya, o queda pendiente la conexión OAuth?
+  const hasShopifyToken = !!input.shopifyAccessToken;
+  const PENDING_OAUTH = "Pendiente: conectar Shopify desde el detalle del cliente";
+  const pendingStep = (name: string) =>
+    steps.push({ name, ok: true, pending: true, detail: PENDING_OAUTH });
+
   // 1) Tenant + secretos de Shopify.
   const tenantOk = await step("Crear/actualizar tenant", async () => {
     const t = await upsertTenant({
@@ -81,6 +92,8 @@ export async function provisionTenant(
       shopifyDomain: input.shopifyDomain,
       shopifyAccessToken: input.shopifyAccessToken,
       shopifyApiSecret: input.shopifyApiSecret,
+      shopifyClientId: input.shopifyClientId,
+      shopifyClientSecret: input.shopifyClientSecret,
       systemPrompt: input.systemPrompt,
       plan: input.plan,
       monthlyFee: input.monthlyFee,
@@ -96,18 +109,26 @@ export async function provisionTenant(
   }
 
   // 2) Backfill del catálogo con embeddings.
-  await step("Backfill del catálogo", async () => {
-    const n = await runBackfill(input.slug);
-    if (n === 0) throw new Error("0 productos sincronizados (¿token o dominio?)");
-    return `${n} producto(s) con embedding`;
-  });
+  if (hasShopifyToken) {
+    await step("Backfill del catálogo", async () => {
+      const n = await runBackfill(input.slug);
+      if (n === 0) throw new Error("0 productos sincronizados (¿token o dominio?)");
+      return `${n} producto(s) con embedding`;
+    });
+  } else {
+    pendingStep("Backfill del catálogo");
+  }
 
   // 3) Webhooks de Shopify.
-  await step("Registrar webhooks de Shopify", async () => {
-    if (!baseUrl) throw new Error("Falta APP_BASE_URL / WEBHOOK_BASE_URL");
-    const r = await registerShopifyWebhooks(input.slug, baseUrl);
-    return r.map((x) => `${x.topic}:${x.action}`).join(", ");
-  });
+  if (hasShopifyToken) {
+    await step("Registrar webhooks de Shopify", async () => {
+      if (!baseUrl) throw new Error("Falta APP_BASE_URL / WEBHOOK_BASE_URL");
+      const r = await registerShopifyWebhooks(input.slug, baseUrl);
+      return r.map((x) => `${x.topic}:${x.action}`).join(", ");
+    });
+  } else {
+    pendingStep("Registrar webhooks de Shopify");
+  }
 
   // 4) Credenciales de WhatsApp.
   await step("Guardar credenciales de WhatsApp", async () => {
@@ -168,16 +189,21 @@ export async function provisionTenant(
     return u.reused ? `${input.userEmail} (reusado)` : input.userEmail;
   });
 
-  // 8) Verificación.
-  await step("Verificación del tenant", async () => {
-    const v = await runVerify(input.slug);
-    const passed = v.checks.filter((c) => c.ok).length;
-    if (!v.ok) {
-      const failed = v.checks.filter((c) => !c.ok).map((c) => c.name).join("; ");
-      throw new Error(`${passed}/${v.checks.length} (falló: ${failed})`);
-    }
-    return `${passed}/${v.checks.length} en verde`;
-  });
+  // 8) Verificación (la de RAG/productos necesita el catálogo → pendiente si
+  //    Shopify se conectará por OAuth).
+  if (hasShopifyToken) {
+    await step("Verificación del tenant", async () => {
+      const v = await runVerify(input.slug);
+      const passed = v.checks.filter((c) => c.ok).length;
+      if (!v.ok) {
+        const failed = v.checks.filter((c) => !c.ok).map((c) => c.name).join("; ");
+        throw new Error(`${passed}/${v.checks.length} (falló: ${failed})`);
+      }
+      return `${passed}/${v.checks.length} en verde`;
+    });
+  } else {
+    pendingStep("Verificación del tenant");
+  }
 
   const ok = steps.every((s) => s.ok);
 

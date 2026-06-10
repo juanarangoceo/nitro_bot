@@ -4,6 +4,7 @@ import { getPlatformAdminContext } from "@/lib/admin/context";
 import { setTenantActive, updateTenantCommercial } from "../../actions";
 import { PromptEditor, RotateShopify, RotateWa, ConfigureWa } from "./detail-forms";
 import { UsersSection, type TenantUser } from "./users-section";
+import { ShopifyConnect } from "./shopify-connect";
 
 function CredFlag({ label, ok }: { label: string; ok: boolean }) {
   return (
@@ -27,11 +28,21 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 
 export default async function ClientDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ shopify_oauth?: string; reason?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
   const { admin } = await getPlatformAdminContext();
+
+  const oauthBanner =
+    sp.shopify_oauth === "ok"
+      ? ({ kind: "ok" } as const)
+      : sp.shopify_oauth === "error"
+        ? ({ kind: "error", reason: sp.reason } as const)
+        : null;
 
   const { data: t } = await admin
     .from("tenants")
@@ -46,7 +57,9 @@ export default async function ClientDetailPage({
   // tokens cifrados jamás llegan al navegador (regla no negociable).
   const { data: sec } = await admin
     .from("tenant_secrets")
-    .select("shopify_access_token, shopify_webhook_secret, wa_access_token")
+    .select(
+      "shopify_access_token, shopify_webhook_secret, wa_access_token, shopify_client_id, shopify_client_secret"
+    )
     .eq("tenant_id", id)
     .maybeSingle();
   const creds = {
@@ -55,6 +68,8 @@ export default async function ClientDetailPage({
     waToken: !!sec?.wa_access_token,
     wabaId: !!t.wa_business_account_id,
     phoneId: !!t.wa_phone_number_id,
+    shopifyClientId: !!sec?.shopify_client_id,
+    shopifyClientSecret: !!sec?.shopify_client_secret,
   };
 
   // Usuarios del dashboard del tenant + último ingreso (Auth Admin API).
@@ -189,6 +204,17 @@ export default async function ClientDetailPage({
           </div>
         </Card>
       </div>
+
+      <Card title="Conexión Shopify (OAuth)">
+        <ShopifyConnect
+          tenantId={t.id}
+          hasDomain={!!t.shopify_domain}
+          hasClientId={creds.shopifyClientId}
+          hasClientSecret={creds.shopifyClientSecret}
+          hasToken={creds.shopifyToken}
+          banner={oauthBanner}
+        />
+      </Card>
 
       <Card title="Usuarios del dashboard">
         <UsersSection users={users} />

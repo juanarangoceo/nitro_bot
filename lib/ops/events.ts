@@ -13,6 +13,7 @@ export type EventKind =
   | "queue_failure"
   | "escalation_auto"
   | "notify_failure"
+  | "oauth_failure"
   | "backup";
 
 export type EventSeverity = "info" | "warning" | "error";

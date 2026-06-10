@@ -60,8 +60,15 @@ export function NewClientForm() {
 
         <Section title="Shopify">
           <Field label="Dominio" name="shopify_domain" required placeholder="tienda.myshopify.com" />
-          <Field label="Access token" name="shopify_access_token" required placeholder="shpat_..." />
-          <Field label="API secret (HMAC)" name="shopify_api_secret" required placeholder="shpss_..." />
+          <p className="text-[11px] text-neutral-400 md:col-span-2">
+            Opción A (recomendada): app del Dev Dashboard → Client ID + Client Secret; el token
+            se obtiene con &quot;Conectar Shopify&quot; en el detalle del cliente. Opción B
+            (compatibilidad): token manual.
+          </p>
+          <Field label="Client ID de la app (OAuth)" name="shopify_client_id" />
+          <Field label="Client Secret de la app (OAuth)" name="shopify_client_secret" />
+          <Field label="Access token (manual)" name="shopify_access_token" placeholder="shpat_..." />
+          <Field label="API secret / HMAC (manual)" name="shopify_api_secret" placeholder="shpss_..." />
         </Section>
 
         <Section title="WhatsApp (montado en Meta por Nitro)">
@@ -127,8 +134,12 @@ export function NewClientForm() {
             <ul className="mt-3 space-y-2">
               {state.steps.map((s, i) => (
                 <li key={i} className="text-xs">
-                  <span className={s.ok ? "text-emerald-600" : "text-red-600"}>
-                    {s.ok ? "✅" : "❌"} {s.name}
+                  <span
+                    className={
+                      s.pending ? "text-amber-600" : s.ok ? "text-emerald-600" : "text-red-600"
+                    }
+                  >
+                    {s.pending ? "🟡" : s.ok ? "✅" : "❌"} {s.name}
                   </span>
                   {s.detail && <p className="text-neutral-400">{s.detail}</p>}
                 </li>

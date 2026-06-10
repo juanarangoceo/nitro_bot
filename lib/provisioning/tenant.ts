@@ -10,8 +10,12 @@ export type UpsertTenantInput = {
   slug: string;
   name: string;
   shopifyDomain: string;
-  shopifyAccessToken: string;
-  shopifyApiSecret: string;
+  // Token manual (compatibilidad). Alternativa: par client_id/client_secret de
+  // la app del Dev Dashboard y conectar por OAuth desde el detalle del cliente.
+  shopifyAccessToken?: string;
+  shopifyApiSecret?: string;
+  shopifyClientId?: string;
+  shopifyClientSecret?: string;
   systemPrompt?: string;
   plan?: string | null;
   monthlyFee?: number | null;
@@ -43,15 +47,24 @@ export async function upsertTenant(
     .single();
   if (tErr) throw new Error(`Upsert tenant falló: ${tErr.message}`);
 
-  const { error: sErr } = await supabase.from("tenant_secrets").upsert(
-    {
-      tenant_id: tenant.id,
-      shopify_access_token: encryptSecret(input.shopifyAccessToken),
-      shopify_webhook_secret: encryptSecret(input.shopifyApiSecret),
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "tenant_id" }
-  );
+  // Solo las columnas provistas (merge-duplicates preserva el resto).
+  const secretsRow: Record<string, unknown> = {
+    tenant_id: tenant.id,
+    updated_at: new Date().toISOString(),
+  };
+  if (input.shopifyAccessToken) {
+    secretsRow.shopify_access_token = encryptSecret(input.shopifyAccessToken);
+  }
+  if (input.shopifyApiSecret) {
+    secretsRow.shopify_webhook_secret = encryptSecret(input.shopifyApiSecret);
+  }
+  if (input.shopifyClientId) secretsRow.shopify_client_id = input.shopifyClientId;
+  if (input.shopifyClientSecret) {
+    secretsRow.shopify_client_secret = encryptSecret(input.shopifyClientSecret);
+  }
+  const { error: sErr } = await supabase
+    .from("tenant_secrets")
+    .upsert(secretsRow, { onConflict: "tenant_id" });
   if (sErr) throw new Error(`Upsert secretos falló: ${sErr.message}`);
 
   return tenant;

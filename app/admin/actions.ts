@@ -48,8 +48,6 @@ export async function provisionTenantAction(
     "name",
     "slug",
     "shopify_domain",
-    "shopify_access_token",
-    "shopify_api_secret",
     "wa_phone_number_id",
     "wa_token",
     "waba_id",
@@ -59,6 +57,20 @@ export async function provisionTenantAction(
   const missing = required.filter((k) => !str(fd, k));
   if (missing.length) {
     return { ran: true, ok: false, steps: [], error: `Faltan campos: ${missing.join(", ")}` };
+  }
+
+  // Shopify: o token manual (token + API secret) o app para OAuth (client_id +
+  // client_secret). Con el par, la conexión se completa luego desde el detalle.
+  const hasManualToken = !!str(fd, "shopify_access_token") && !!str(fd, "shopify_api_secret");
+  const hasOauthApp = !!str(fd, "shopify_client_id") && !!str(fd, "shopify_client_secret");
+  if (!hasManualToken && !hasOauthApp) {
+    return {
+      ran: true,
+      ok: false,
+      steps: [],
+      error:
+        "Shopify: da el token manual (access token + API secret) o el par Client ID + Client Secret de la app (OAuth).",
+    };
   }
 
   // Foto de perfil opcional.
@@ -81,8 +93,10 @@ export async function provisionTenantAction(
         messageLimit: optNum(fd, "message_limit") ?? null,
         systemPrompt: optStr(fd, "system_prompt"),
         shopifyDomain: str(fd, "shopify_domain"),
-        shopifyAccessToken: str(fd, "shopify_access_token"),
-        shopifyApiSecret: str(fd, "shopify_api_secret"),
+        shopifyAccessToken: optStr(fd, "shopify_access_token"),
+        shopifyApiSecret: optStr(fd, "shopify_api_secret"),
+        shopifyClientId: optStr(fd, "shopify_client_id"),
+        shopifyClientSecret: optStr(fd, "shopify_client_secret"),
         waPhoneNumberId: str(fd, "wa_phone_number_id"),
         waToken: str(fd, "wa_token"),
         wabaId: str(fd, "waba_id"),
@@ -205,6 +219,44 @@ export async function rotateShopifyCreds(
       action: "rotate_creds",
       tenantId,
       detail: { provider: "shopify", changed: { domain: !!domain, token: !!token, secret: !!secret } },
+    });
+    revalidatePath(`/admin/clients/${tenantId}`);
+    return { ok: true, error: null };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+// ── Credenciales de la app de Shopify (OAuth, spec 08) ──────────────────────
+// Guarda el Client ID (claro) y el Client Secret (cifrado) de la app del Dev
+// Dashboard del cliente. Mismo patrón que la rotación: lo vacío se conserva y
+// los valores nunca vuelven al navegador.
+export async function saveShopifyAppCreds(
+  _prev: RotateState,
+  fd: FormData
+): Promise<RotateState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  const clientId = String(fd.get("shopify_client_id") ?? "").trim();
+  const clientSecret = String(fd.get("shopify_client_secret") ?? "").trim();
+  if (!tenantId) return { ok: false, error: "Falta el tenant." };
+  if (!clientId && !clientSecret) {
+    return { ok: false, error: "Llena al menos un campo a cambiar." };
+  }
+  try {
+    const secrets: Record<string, unknown> = {
+      tenant_id: tenantId,
+      updated_at: new Date().toISOString(),
+    };
+    if (clientId) secrets.shopify_client_id = clientId;
+    if (clientSecret) secrets.shopify_client_secret = encryptSecret(clientSecret);
+    await admin.from("tenant_secrets").upsert(secrets, { onConflict: "tenant_id" });
+
+    await logAudit(admin, {
+      adminId,
+      action: "save_shopify_app_creds",
+      tenantId,
+      detail: { changed: { client_id: !!clientId, client_secret: !!clientSecret } },
     });
     revalidatePath(`/admin/clients/${tenantId}`);
     return { ok: true, error: null };
