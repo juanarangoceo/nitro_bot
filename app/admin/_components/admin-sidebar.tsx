@@ -8,6 +8,8 @@ const ITEMS = [
   { href: "/admin", label: "Clientes" },
   { href: "/admin/new", label: "Alta de cliente" },
   { href: "/admin/summary", label: "Resumen plataforma" },
+  { href: "/admin/health", label: "Salud" },
+  { href: "/admin/tester", label: "Probador" },
 ];
 
 export function AdminSidebar({ email }: { email: string }) {

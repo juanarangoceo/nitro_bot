@@ -9,15 +9,23 @@
 // directamente para trabajo de fondo: pasa por aquí.
 
 import { after } from "next/server";
+import { logEvent } from "./ops/events";
 
 // Encola trabajo de fondo. El error se captura aquí: una tarea que falla no debe
-// tumbar el proceso ni afectar la respuesta ya enviada.
+// tumbar el proceso ni afectar la respuesta ya enviada. Además del log en
+// consola, el fallo queda en event_log (best-effort: si la DB también falla,
+// logEvent solo loguea en consola).
 export function enqueue(task: () => Promise<void>): void {
   after(async () => {
     try {
       await task();
     } catch (e) {
       console.error("[queue] tarea de fondo falló:", e);
+      await logEvent({
+        kind: "queue_failure",
+        severity: "error",
+        detail: { message: (e as Error).message },
+      });
     }
   });
 }

@@ -305,6 +305,49 @@ export async function configureWaProfile(
   }
 }
 
+// ── Borrar conversación (limpieza de pruebas internas) ──────────────────────
+// Borra mensajes, tickets y eventos de la conversación y luego la conversación.
+// No toca órdenes ya creadas (orders.conversation_id queda en null por FK).
+// Solo /admin; el cliente nunca ve esta acción.
+export type DeleteConversationState = { ok: boolean; error: string | null };
+
+export async function deleteConversationAdmin(
+  _prev: DeleteConversationState,
+  fd: FormData
+): Promise<DeleteConversationState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const conversationId = String(fd.get("conversation_id") ?? "");
+  if (!conversationId) return { ok: false, error: "Falta la conversación." };
+
+  const { data: conv } = await admin
+    .from("conversations")
+    .select("id, tenant_id, customer_phone, is_test")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (!conv) return { ok: false, error: "Conversación no encontrada." };
+
+  try {
+    // Orden: hijos primero. event_log tiene FK on delete set null, pero la
+    // spec pide borrar también las trazas de la conversación.
+    await admin.from("event_log").delete().eq("conversation_id", conversationId);
+    await admin.from("tickets").delete().eq("conversation_id", conversationId);
+    await admin.from("messages").delete().eq("conversation_id", conversationId);
+    const { error } = await admin.from("conversations").delete().eq("id", conversationId);
+    if (error) return { ok: false, error: error.message };
+
+    await logAudit(admin, {
+      adminId,
+      action: "delete_conversation",
+      tenantId: conv.tenant_id,
+      detail: { customer_phone: conv.customer_phone, is_test: conv.is_test },
+    });
+    revalidatePath("/admin/health");
+    return { ok: true, error: null };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 export async function rotateWaCreds(_prev: RotateState, fd: FormData): Promise<RotateState> {
   const { admin, adminId } = await requirePlatformAdmin();
   const tenantId = String(fd.get("tenant_id") ?? "");
