@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getPlatformAdminContext } from "@/lib/admin/context";
 import { setTenantActive, updateTenantCommercial } from "../../actions";
 import { PromptEditor, RotateShopify, RotateWa, ConfigureWa } from "./detail-forms";
+import { UsersSection, type TenantUser } from "./users-section";
 
 function CredFlag({ label, ok }: { label: string; ok: boolean }) {
   return (
@@ -55,6 +56,24 @@ export default async function ClientDetailPage({
     wabaId: !!t.wa_business_account_id,
     phoneId: !!t.wa_phone_number_id,
   };
+
+  // Usuarios del dashboard del tenant + último ingreso (Auth Admin API).
+  const { data: appUsers } = await admin
+    .from("app_users")
+    .select("id, email, role")
+    .eq("tenant_id", id)
+    .order("created_at", { ascending: true });
+  const users: TenantUser[] = await Promise.all(
+    (appUsers ?? []).map(async (u) => {
+      const { data } = await admin.auth.admin.getUserById(u.id);
+      return {
+        id: u.id,
+        email: u.email,
+        role: u.role,
+        lastSignInAt: data?.user?.last_sign_in_at ?? null,
+      };
+    })
+  );
 
   const { data: audit } = await admin
     .from("audit_log")
@@ -170,6 +189,10 @@ export default async function ClientDetailPage({
           </div>
         </Card>
       </div>
+
+      <Card title="Usuarios del dashboard">
+        <UsersSection users={users} />
+      </Card>
 
       <Card title="WhatsApp: suscripción y perfil">
         <ConfigureWa tenantId={t.id} />

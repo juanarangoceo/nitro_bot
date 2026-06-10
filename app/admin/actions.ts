@@ -15,6 +15,7 @@ import {
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { env } from "@/lib/env";
 import { revalidatePath } from "next/cache";
+import crypto from "node:crypto";
 
 // ── Alta de cliente (el botón) ──────────────────────────────────────────────
 export type ProvisionState = {
@@ -303,6 +304,58 @@ export async function configureWaProfile(
   } catch (e) {
     return { ok: false, error: (e as Error).message, detail: notes.join(" · ") || null };
   }
+}
+
+// ── Restablecer contraseña de un usuario del tenant ─────────────────────────
+// Genera una contraseña temporal legible, la fija vía Auth Admin API y la
+// devuelve para mostrarla UNA SOLA VEZ. No se guarda en ningún lado; en
+// audit_log queda la acción sin la contraseña.
+export type ResetPasswordState = {
+  ok: boolean;
+  error: string | null;
+  // Solo presente en la respuesta inmediata de la acción (se muestra una vez).
+  tempPassword: string | null;
+  email: string | null;
+};
+
+// Alfabeto sin caracteres ambiguos (0/O, 1/l/I) para dictarla sin errores.
+const PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+function generateTempPassword(): string {
+  const pick = () => PASSWORD_ALPHABET[crypto.randomInt(PASSWORD_ALPHABET.length)];
+  const group = () => Array.from({ length: 4 }, pick).join("");
+  return `${group()}-${group()}-${group()}`; // 14 caracteres
+}
+
+export async function resetUserPassword(
+  _prev: ResetPasswordState,
+  fd: FormData
+): Promise<ResetPasswordState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const userId = String(fd.get("user_id") ?? "");
+  if (!userId) return { ok: false, error: "Falta el usuario.", tempPassword: null, email: null };
+
+  // Solo usuarios de dashboard (app_users); nunca cuentas de plataforma.
+  const { data: appUser } = await admin
+    .from("app_users")
+    .select("id, tenant_id, email")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!appUser) {
+    return { ok: false, error: "Usuario no encontrado.", tempPassword: null, email: null };
+  }
+
+  const tempPassword = generateTempPassword();
+  const { error } = await admin.auth.admin.updateUserById(userId, { password: tempPassword });
+  if (error) return { ok: false, error: error.message, tempPassword: null, email: null };
+
+  await logAudit(admin, {
+    adminId,
+    action: "reset_password",
+    tenantId: appUser.tenant_id,
+    detail: { user_email: appUser.email },
+  });
+  return { ok: true, error: null, tempPassword, email: appUser.email };
 }
 
 // ── Borrar conversación (limpieza de pruebas internas) ──────────────────────
