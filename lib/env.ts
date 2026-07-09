@@ -44,4 +44,12 @@ export const env = {
   get APP_BASE_URL(): string | null {
     return process.env.APP_BASE_URL ?? process.env.WEBHOOK_BASE_URL ?? null;
   },
+  // Resend (opcionales): sin ellas las notificaciones por correo son no-op.
+  get RESEND_API_KEY(): string | null {
+    return process.env.RESEND_API_KEY ?? null;
+  },
+  // Remitente verificado en Resend, p. ej. "Nitro Bot <avisos@tudominio.com>".
+  get NOTIFY_FROM_EMAIL(): string | null {
+    return process.env.NOTIFY_FROM_EMAIL ?? null;
+  },
 };

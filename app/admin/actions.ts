@@ -157,6 +157,13 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
   if (plan) update.plan = plan;
   if (fee) update.monthly_fee = Number(fee);
   if (limit) update.message_limit = Number(limit);
+  // El correo de notificaciones viene prellenado en el formulario, así que se
+  // actualiza siempre que el campo esté presente: vaciarlo desactiva los avisos.
+  if (fd.has("notification_email")) {
+    const email = String(fd.get("notification_email") ?? "").trim().toLowerCase();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
+    update.notification_email = email || null;
+  }
   if (Object.keys(update).length === 0) return;
 
   await admin.from("tenants").update(update).eq("id", tenantId);

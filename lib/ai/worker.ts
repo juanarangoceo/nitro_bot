@@ -16,6 +16,7 @@ import { createAdminClient } from "../supabase/admin";
 import { runAssistant, type AssistantResult, type Content, type GeminiPart } from "./gemini";
 import { escalateToHuman } from "./escalation";
 import { logEvent, summarizeToolTrace } from "../ops/events";
+import { notifyNewConversation } from "../notify/email";
 import {
   sendText,
   markAsRead,
@@ -187,6 +188,14 @@ export async function processInboundMessage(params: {
       return;
     }
     conv = inserted;
+    // Conversación NUEVA: aviso por correo al equipo del cliente (best-effort,
+    // dentro de notifyNewConversation nada lanza hacia afuera).
+    await notifyNewConversation({
+      tenantId: tenant.id,
+      conversationId: inserted.id,
+      customerPhone: phone,
+      contactName,
+    });
   } else {
     const update: Record<string, unknown> = {
       last_customer_message_at: new Date().toISOString(),

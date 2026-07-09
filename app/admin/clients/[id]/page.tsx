@@ -47,7 +47,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email"
     )
     .eq("id", id)
     .maybeSingle();
@@ -165,6 +165,18 @@ export default async function ClientDetailPage({
                 name="message_limit"
                 type="number"
                 defaultValue={t.message_limit ?? ""}
+                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">
+                Correo de notificaciones (nueva conversación y tickets; vacío = sin avisos)
+              </span>
+              <input
+                name="notification_email"
+                type="email"
+                defaultValue={t.notification_email ?? ""}
+                placeholder="equipo@latienda.com"
                 className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
               />
             </label>

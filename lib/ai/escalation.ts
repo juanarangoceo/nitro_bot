@@ -5,6 +5,7 @@
 // colgar notificaciones (Telegram al operador, correo al equipo del cliente).
 
 import { createAdminClient } from "../supabase/admin";
+import { notifyTicketEscalated } from "../notify/email";
 
 export async function escalateToHuman(params: {
   tenantId: string;
@@ -30,6 +31,9 @@ export async function escalateToHuman(params: {
     })
     .select("id")
     .maybeSingle();
+
+  // Aviso por correo al equipo del cliente (best-effort: nunca rompe el escalado).
+  await notifyTicketEscalated({ tenantId, conversationId, reason });
 
   return { ticketId: ticket?.id ?? null };
 }
