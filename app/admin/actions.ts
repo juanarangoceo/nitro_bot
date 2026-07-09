@@ -164,10 +164,28 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
     update.notification_email = email || null;
   }
+  // El checkbox solo llega cuando está marcado; el hidden marca su presencia.
+  if (fd.has("reminders_enabled_present")) {
+    update.reminders_enabled = fd.get("reminders_enabled") === "on";
+  }
   if (Object.keys(update).length === 0) return;
 
   await admin.from("tenants").update(update).eq("id", tenantId);
   await logAudit(admin, { adminId, action: "update_commercial", tenantId, detail: update });
+  revalidatePath(`/admin/clients/${tenantId}`);
+}
+
+// ── Reiniciar el contador de mensajes (entrega en cero tras pruebas) ────────
+export async function resetMessageCounter(fd: FormData): Promise<void> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  if (!tenantId) return;
+
+  await admin
+    .from("tenants")
+    .update({ current_month_messages: 0, counter_period_start: new Date().toISOString() })
+    .eq("id", tenantId);
+  await logAudit(admin, { adminId, action: "reset_counter", tenantId });
   revalidatePath(`/admin/clients/${tenantId}`);
 }
 

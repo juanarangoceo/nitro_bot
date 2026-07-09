@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/reset-counters",
       "schedule": "0 5 1 * *"
+    },
+    {
+      "path": "/api/cron/reminders",
+      "schedule": "0 * * * *"
     }
   ]
 }

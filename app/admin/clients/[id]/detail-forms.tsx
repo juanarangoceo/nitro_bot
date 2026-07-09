@@ -7,11 +7,39 @@ import {
   rotateWaCreds,
   configureWaProfile,
   updateTenantBranding,
+  resetMessageCounter,
   type PromptState,
   type RotateState,
   type ConfigureWaState,
   type BrandingState,
 } from "../../actions";
+
+// Botón "entregar en cero": reinicia current_month_messages tras las pruebas.
+export function ResetCounterForm({ tenantId, current }: { tenantId: string; current: number }) {
+  return (
+    <form
+      action={resetMessageCounter}
+      className="mt-3 border-t border-neutral-100 pt-3"
+      onSubmit={(e) => {
+        if (
+          !confirm(
+            `¿Reiniciar el contador de mensajes a 0? (actual: ${current.toLocaleString("es-CO")}). Úsalo al entregar el cliente después de las pruebas.`
+          )
+        ) {
+          e.preventDefault();
+        }
+      }}
+    >
+      <input type="hidden" name="tenant_id" value={tenantId} />
+      <button
+        type="submit"
+        className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-100"
+      >
+        Reiniciar contador a 0
+      </button>
+    </form>
+  );
+}
 
 const promptInit: PromptState = { ok: false, error: null };
 const rotateInit: RotateState = { ok: false, error: null };

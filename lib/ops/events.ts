@@ -14,6 +14,7 @@ export type EventKind =
   | "escalation_auto"
   | "notify_failure"
   | "oauth_failure"
+  | "reminder"
   | "backup";
 
 export type EventSeverity = "info" | "warning" | "error";

@@ -2,7 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPlatformAdminContext } from "@/lib/admin/context";
 import { setTenantActive, updateTenantCommercial } from "../../actions";
-import { PromptEditor, RotateShopify, RotateWa, ConfigureWa, BrandingForm } from "./detail-forms";
+import {
+  PromptEditor,
+  RotateShopify,
+  RotateWa,
+  ConfigureWa,
+  BrandingForm,
+  ResetCounterForm,
+} from "./detail-forms";
 import { UsersSection, type TenantUser } from "./users-section";
 import { ShopifyConnect } from "./shopify-connect";
 
@@ -47,7 +54,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled"
     )
     .eq("id", id)
     .maybeSingle();
@@ -180,6 +187,15 @@ export default async function ClientDetailPage({
                 className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
               />
             </label>
+            <label className="flex items-center gap-2 text-xs text-neutral-600">
+              <input type="hidden" name="reminders_enabled_present" value="1" />
+              <input
+                type="checkbox"
+                name="reminders_enabled"
+                defaultChecked={t.reminders_enabled !== false}
+              />
+              Recordatorios automáticos (follow-up a conversaciones a medias)
+            </label>
             <p className="text-xs text-neutral-400">
               Consumo actual: {Number(t.current_month_messages ?? 0).toLocaleString("es-CO")} /{" "}
               {Number(t.message_limit ?? 0).toLocaleString("es-CO")}
@@ -191,6 +207,10 @@ export default async function ClientDetailPage({
               Guardar
             </button>
           </form>
+          <ResetCounterForm
+            tenantId={t.id}
+            current={Number(t.current_month_messages ?? 0)}
+          />
         </Card>
 
         <Card title="Rotar credenciales">

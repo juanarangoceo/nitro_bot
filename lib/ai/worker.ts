@@ -199,6 +199,7 @@ export async function processInboundMessage(params: {
   } else {
     const update: Record<string, unknown> = {
       last_customer_message_at: new Date().toISOString(),
+      reminder_count: 0, // el cliente escribió: nuevo episodio de silencio
     };
     if (conv.status === "closed") {
       update.status = "bot_active"; // reactivación; closed_at queda como corte
