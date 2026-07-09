@@ -246,8 +246,9 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   - **Reset de contador** en /admin ("Reiniciar contador a 0", auditado) para
     entregar el cliente en cero tras las pruebas.
 
-- **Sesión 2026-07-09 (bis) — 7 ajustes del asesor (construidos y VERIFICADOS
-  e2e contra Gemini y Shopify dev; typecheck/build/verify 4/4; NO desplegados)**:
+- **Sesión 2026-07-09 (bis) — 7 ajustes del asesor (VERIFICADOS e2e contra
+  Gemini y Shopify dev; typecheck/build/verify 4/4; DESPLEGADOS en producción,
+  commit c6582c4, health OK)**:
   - **Descripciones + disponibilidad (migración #15)**: `match_products` filtra
     `status='active'` (disponible = status de Shopify, NO stock — el cliente usa
     "seguir vendiendo sin inventario"). `buscar_productos` devuelve `descripcion`
@@ -290,9 +291,8 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     con `toolConfig mode NONE` para responder con lo recopilado antes de escalar.
 
 ### 🔜 Pendiente
-- **Desplegar los 7 ajustes** (migraciones #15/#16 ya aplicadas a la DB; falta
-  `vercel --prod` o push). Tras el deploy: llenar **"Información de la empresa"**
-  en /admin para Elegance (garantías/envíos reales), probar foto+texto por
+- **Post-deploy de los 7 ajustes**: llenar **"Información de la empresa"** en
+  /admin para Elegance (garantías/envíos reales), probar foto+texto por
   WhatsApp real, y cancelar la orden de prueba **#133910** en Shopify dev.
 - **Vigilar el cron horario de recordatorios**: el deploy lo aceptó, pero
   confirmar al día siguiente que hay eventos `reminder` en event_log
