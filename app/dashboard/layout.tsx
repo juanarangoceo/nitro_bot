@@ -22,8 +22,16 @@ export default async function DashboardLayout({
   ];
 
   return (
-    <div className="flex min-h-dvh bg-neutral-50">
-      <Sidebar tenantName={tenant.name} email={user.email ?? ""} items={items} />
+    <div
+      className="flex min-h-dvh bg-neutral-50"
+      style={{ "--brand": tenant.brand_color ?? "#171717" } as React.CSSProperties}
+    >
+      <Sidebar
+        tenantName={tenant.name}
+        logoUrl={tenant.logo_url}
+        email={user.email ?? ""}
+        items={items}
+      />
       <main className="flex-1 overflow-auto p-8">{children}</main>
     </div>
   );

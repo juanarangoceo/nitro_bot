@@ -6,14 +6,88 @@ import {
   rotateShopifyCreds,
   rotateWaCreds,
   configureWaProfile,
+  updateTenantBranding,
   type PromptState,
   type RotateState,
   type ConfigureWaState,
+  type BrandingState,
 } from "../../actions";
 
 const promptInit: PromptState = { ok: false, error: null };
 const rotateInit: RotateState = { ok: false, error: null };
 const configInit: ConfigureWaState = { ok: false, error: null, detail: null };
+const brandingInit: BrandingState = { ok: false, error: null };
+
+export function BrandingForm({
+  tenantId,
+  logoUrl,
+  brandColor,
+}: {
+  tenantId: string;
+  logoUrl: string | null;
+  brandColor: string | null;
+}) {
+  const [state, action, pending] = useActionState(updateTenantBranding, brandingInit);
+  return (
+    <form action={action} className="space-y-3">
+      <input type="hidden" name="tenant_id" value={tenantId} />
+      <p className="text-[11px] text-neutral-500">
+        Logo y color de acento del dashboard del cliente. Lo que dejes vacío se conserva.
+      </p>
+      <div className="flex items-center gap-4">
+        {logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={logoUrl}
+            alt="Logo actual"
+            className="h-12 w-12 rounded-lg border border-neutral-200 object-contain"
+          />
+        ) : (
+          <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-neutral-300 text-[10px] text-neutral-400">
+            sin logo
+          </div>
+        )}
+        <label className="block flex-1">
+          <span className="text-xs font-medium text-neutral-600">Logo (imagen, máx 2 MB)</span>
+          <input
+            name="logo"
+            type="file"
+            accept="image/*"
+            className="mt-1 w-full text-xs text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-neutral-700 hover:file:bg-neutral-200"
+          />
+        </label>
+      </div>
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="block">
+          <span className="text-xs font-medium text-neutral-600">Color de acento</span>
+          <input
+            name="brand_color"
+            type="color"
+            defaultValue={brandColor ?? "#171717"}
+            className="mt-1 block h-9 w-16 cursor-pointer rounded-lg border border-neutral-300"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 pb-2 text-xs text-neutral-600">
+          <input type="checkbox" name="clear_color" /> Quitar color (volver al neutro)
+        </label>
+        <label className="flex items-center gap-1.5 pb-2 text-xs text-neutral-600">
+          <input type="checkbox" name="clear_logo" /> Quitar logo
+        </label>
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+        >
+          {pending ? "Guardando…" : "Guardar personalización"}
+        </button>
+        {state.ok && <span className="text-sm text-emerald-600">Guardado ✅</span>}
+        {state.error && <span className="text-sm text-red-600">{state.error}</span>}
+      </div>
+    </form>
+  );
+}
 
 export function PromptEditor({
   tenantId,

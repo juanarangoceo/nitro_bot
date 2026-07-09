@@ -47,6 +47,26 @@ export async function uploadWaMedia(params: {
   return path;
 }
 
+// Sube el logo del tenant al bucket PÚBLICO `branding` y devuelve la URL
+// pública con ?v= para reventar caché al reemplazarlo (la key es estable).
+export async function uploadTenantLogo(params: {
+  tenantId: string;
+  bytes: Uint8Array | Buffer;
+  mimeType: string;
+}): Promise<string> {
+  const path = `${params.tenantId}/logo.${extFor(params.mimeType)}`;
+  const supabase = createAdminClient();
+  const { error } = await supabase.storage
+    .from("branding")
+    .upload(path, Buffer.from(params.bytes), {
+      contentType: params.mimeType,
+      upsert: true,
+    });
+  if (error) throw new Error(`Storage upload falló: ${error.message}`);
+  const { data } = supabase.storage.from("branding").getPublicUrl(path);
+  return `${data.publicUrl}?v=${Date.now()}`;
+}
+
 // Firma una URL temporal de lectura (default 60s) para mostrar la media en el panel.
 export async function signedMediaUrl(
   path: string,

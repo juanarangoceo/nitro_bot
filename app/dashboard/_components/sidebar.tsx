@@ -8,10 +8,12 @@ export type NavItem = { href: string; label: string };
 
 export function Sidebar({
   tenantName,
+  logoUrl,
   email,
   items,
 }: {
   tenantName: string;
+  logoUrl: string | null;
   email: string;
   items: NavItem[];
 }) {
@@ -19,9 +21,19 @@ export function Sidebar({
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-neutral-200 bg-white">
-      <div className="px-5 py-5">
-        <p className="text-sm font-semibold text-neutral-900">{tenantName}</p>
-        <p className="truncate text-xs text-neutral-500">{email}</p>
+      <div className="flex items-center gap-3 px-5 py-5">
+        {logoUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={logoUrl}
+            alt={`Logo de ${tenantName}`}
+            className="h-10 w-10 shrink-0 rounded-lg border border-neutral-200 object-contain"
+          />
+        )}
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-neutral-900">{tenantName}</p>
+          <p className="truncate text-xs text-neutral-500">{email}</p>
+        </div>
       </div>
 
       <nav className="flex-1 space-y-1 px-3">
@@ -36,7 +48,7 @@ export function Sidebar({
               href={item.href}
               className={`block rounded-lg px-3 py-2 text-sm ${
                 active
-                  ? "bg-neutral-900 text-white"
+                  ? "bg-(--brand) text-white"
                   : "text-neutral-700 hover:bg-neutral-100"
               }`}
             >

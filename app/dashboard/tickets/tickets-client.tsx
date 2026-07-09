@@ -123,10 +123,17 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
     if (mediaState.ok) setMediaKey((k) => k + 1);
   }, [mediaState.ok]);
 
+  // Auto-scroll al fondo del panel de mensajes (al cargar y con cada mensaje).
+  const messagesRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
   return (
     <div className="grid gap-4 md:grid-cols-[280px_1fr]">
       {/* Lista de tickets */}
-      <div className="space-y-2">
+      <div className="max-h-[calc(100dvh-11rem)] space-y-2 overflow-y-auto pr-1">
         {initialTickets.length === 0 && (
           <p className="rounded-2xl border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-400">
             No hay tickets abiertos 🎉
@@ -153,7 +160,7 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
 
       {/* Detalle */}
       {selected ? (
-        <div className="flex min-h-[480px] flex-col rounded-2xl border border-neutral-200 bg-white">
+        <div className="flex h-[calc(100dvh-11rem)] min-h-[480px] flex-col rounded-2xl border border-neutral-200 bg-white">
           <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-neutral-900">{selected.customer_phone}</p>
@@ -171,7 +178,7 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
             </form>
           </div>
 
-          <div className="flex-1 space-y-2 overflow-auto p-4">
+          <div ref={messagesRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
             {messages.map((m) => (
               <div
                 key={m.id}

@@ -21,3 +21,16 @@ export async function closeConversation(fd: FormData): Promise<void> {
 
   revalidatePath("/dashboard/conversations");
 }
+
+// Eliminar una conversación definitivamente. El cascade de la FK borra sus
+// mensajes y tickets; las órdenes ya creadas se conservan (conversation_id
+// queda en null). RLS limita el borrado al propio tenant.
+export async function deleteConversation(fd: FormData): Promise<void> {
+  const { supabase } = await getDashboardContext();
+  const conversationId = String(fd.get("conversation_id") ?? "");
+  if (!conversationId) return;
+
+  await supabase.from("conversations").delete().eq("id", conversationId);
+
+  revalidatePath("/dashboard/conversations");
+}

@@ -13,6 +13,7 @@ import {
   type BusinessProfile,
 } from "@/lib/whatsapp/meta";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { uploadTenantLogo } from "@/lib/storage";
 import { env } from "@/lib/env";
 import { revalidatePath } from "next/cache";
 import crypto from "node:crypto";
@@ -408,6 +409,195 @@ export async function resetUserPassword(
     detail: { user_email: appUser.email },
   });
   return { ok: true, error: null, tempPassword, email: appUser.email };
+}
+
+// ── Crear usuario del dashboard ─────────────────────────────────────────────
+// Alta explícita de un usuario para un tenant existente. A diferencia de
+// seedDashboardUser (idempotente para el alta), aquí un email ya registrado es
+// un ERROR: jamás resetea contraseñas ni re-apunta usuarios de otro tenant.
+export type CreateUserState = {
+  ok: boolean;
+  error: string | null;
+  tempPassword: string | null;
+  email: string | null;
+};
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export async function createDashboardUser(
+  _prev: CreateUserState,
+  fd: FormData
+): Promise<CreateUserState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const fail = (error: string): CreateUserState => ({
+    ok: false,
+    error,
+    tempPassword: null,
+    email: null,
+  });
+
+  const tenantId = str(fd, "tenant_id");
+  const email = str(fd, "email").toLowerCase();
+  const role = str(fd, "role");
+  if (!tenantId) return fail("Falta el cliente.");
+  if (!EMAIL_RE.test(email)) return fail("El correo no es válido.");
+  if (role !== "agent" && role !== "admin") return fail("Rol inválido.");
+
+  const { data: tenant } = await admin
+    .from("tenants")
+    .select("id")
+    .eq("id", tenantId)
+    .maybeSingle();
+  if (!tenant) return fail("Cliente no encontrado.");
+
+  const { data: existing } = await admin
+    .from("app_users")
+    .select("id")
+    .eq("email", email)
+    .maybeSingle();
+  if (existing) return fail("Ese correo ya tiene un usuario del dashboard.");
+
+  const tempPassword = generateTempPassword();
+  const { data: created, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password: tempPassword,
+    email_confirm: true,
+  });
+  if (authError || !created?.user) {
+    return fail(
+      authError?.code === "email_exists"
+        ? "Ese correo ya tiene una cuenta (fuera del dashboard). Usa otro correo."
+        : `No se pudo crear la cuenta: ${authError?.message ?? "error desconocido"}`
+    );
+  }
+
+  const { error: insertError } = await admin
+    .from("app_users")
+    .insert({ id: created.user.id, tenant_id: tenantId, email, role });
+  if (insertError) {
+    // Rollback: sin fila en app_users la cuenta de Auth quedaría huérfana.
+    await admin.auth.admin.deleteUser(created.user.id);
+    return fail(`No se pudo registrar el usuario: ${insertError.message}`);
+  }
+
+  await logAudit(admin, {
+    adminId,
+    action: "create_user",
+    tenantId,
+    detail: { user_email: email, role },
+  });
+  revalidatePath(`/admin/clients/${tenantId}`);
+  return { ok: true, error: null, tempPassword, email };
+}
+
+// ── Eliminar usuario del dashboard ──────────────────────────────────────────
+// Borra la cuenta de Auth (el cascade limpia app_users). Nunca deja al cliente
+// sin usuarios: el último no se puede eliminar.
+export type DeleteUserState = { ok: boolean; error: string | null };
+
+export async function deleteDashboardUser(
+  _prev: DeleteUserState,
+  fd: FormData
+): Promise<DeleteUserState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const userId = String(fd.get("user_id") ?? "");
+  if (!userId) return { ok: false, error: "Falta el usuario." };
+
+  // Solo usuarios de dashboard (app_users); nunca cuentas de plataforma.
+  const { data: appUser } = await admin
+    .from("app_users")
+    .select("id, tenant_id, email")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!appUser) return { ok: false, error: "Usuario no encontrado." };
+
+  const { count } = await admin
+    .from("app_users")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", appUser.tenant_id);
+  if ((count ?? 0) <= 1) {
+    return { ok: false, error: "Es el único usuario del cliente; crea otro antes de eliminarlo." };
+  }
+
+  const { error } = await admin.auth.admin.deleteUser(userId);
+  if (error) return { ok: false, error: `No se pudo eliminar: ${error.message}` };
+
+  await logAudit(admin, {
+    adminId,
+    action: "delete_user",
+    tenantId: appUser.tenant_id,
+    detail: { user_email: appUser.email },
+  });
+  revalidatePath(`/admin/clients/${appUser.tenant_id}`);
+  return { ok: true, error: null };
+}
+
+// ── Personalización del dashboard (logo + color de acento) ──────────────────
+export type BrandingState = { ok: boolean; error: string | null };
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB
+
+export async function updateTenantBranding(
+  _prev: BrandingState,
+  fd: FormData
+): Promise<BrandingState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const tenantId = str(fd, "tenant_id");
+  if (!tenantId) return { ok: false, error: "Falta el cliente." };
+
+  const { data: tenant } = await admin
+    .from("tenants")
+    .select("id")
+    .eq("id", tenantId)
+    .maybeSingle();
+  if (!tenant) return { ok: false, error: "Cliente no encontrado." };
+
+  const update: Record<string, string | null> = {};
+
+  const brandColor = str(fd, "brand_color");
+  if (brandColor) {
+    if (!HEX_RE.test(brandColor)) {
+      return { ok: false, error: "El color debe ser hex #rrggbb (ej: #1d4ed8)." };
+    }
+    update.brand_color = brandColor.toLowerCase();
+  }
+  if (fd.get("clear_color") === "on") update.brand_color = null;
+
+  const logo = fd.get("logo");
+  if (logo instanceof File && logo.size > 0) {
+    if (!logo.type.startsWith("image/")) {
+      return { ok: false, error: "El logo debe ser una imagen." };
+    }
+    if (logo.size > MAX_LOGO_BYTES) {
+      return { ok: false, error: "El logo no puede pesar más de 2 MB." };
+    }
+    update.logo_url = await uploadTenantLogo({
+      tenantId,
+      bytes: Buffer.from(await logo.arrayBuffer()),
+      mimeType: logo.type,
+    });
+  }
+  if (fd.get("clear_logo") === "on") update.logo_url = null;
+
+  if (Object.keys(update).length === 0) {
+    return { ok: false, error: "No hay cambios que guardar." };
+  }
+
+  const { error } = await admin.from("tenants").update(update).eq("id", tenantId);
+  if (error) return { ok: false, error: error.message };
+
+  await logAudit(admin, {
+    adminId,
+    action: "update_branding",
+    tenantId,
+    detail: {
+      logo: "logo_url" in update ? (update.logo_url ? "actualizado" : "quitado") : "sin cambio",
+      brand_color: "brand_color" in update ? (update.brand_color ?? "quitado") : "sin cambio",
+    },
+  });
+  revalidatePath(`/admin/clients/${tenantId}`);
+  return { ok: true, error: null };
 }
 
 // ── Borrar conversación (limpieza de pruebas internas) ──────────────────────

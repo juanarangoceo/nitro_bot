@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPlatformAdminContext } from "@/lib/admin/context";
 import { setTenantActive, updateTenantCommercial } from "../../actions";
-import { PromptEditor, RotateShopify, RotateWa, ConfigureWa } from "./detail-forms";
+import { PromptEditor, RotateShopify, RotateWa, ConfigureWa, BrandingForm } from "./detail-forms";
 import { UsersSection, type TenantUser } from "./users-section";
 import { ShopifyConnect } from "./shopify-connect";
 
@@ -47,7 +47,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color"
     )
     .eq("id", id)
     .maybeSingle();
@@ -217,7 +217,11 @@ export default async function ClientDetailPage({
       </Card>
 
       <Card title="Usuarios del dashboard">
-        <UsersSection users={users} />
+        <UsersSection tenantId={t.id} users={users} />
+      </Card>
+
+      <Card title="Personalización del dashboard">
+        <BrandingForm tenantId={t.id} logoUrl={t.logo_url} brandColor={t.brand_color} />
       </Card>
 
       <Card title="WhatsApp: suscripción y perfil">

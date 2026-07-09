@@ -5,7 +5,14 @@
 // la acción); recargar la página la pierde — por diseño.
 
 import { useActionState } from "react";
-import { resetUserPassword, type ResetPasswordState } from "../../actions";
+import {
+  createDashboardUser,
+  deleteDashboardUser,
+  resetUserPassword,
+  type CreateUserState,
+  type DeleteUserState,
+  type ResetPasswordState,
+} from "../../actions";
 
 export type TenantUser = {
   id: string;
@@ -53,27 +60,121 @@ function ResetButton({ user }: { user: TenantUser }) {
   );
 }
 
-export function UsersSection({ users }: { users: TenantUser[] }) {
-  if (users.length === 0) {
-    return <p className="text-sm text-neutral-400">Este cliente no tiene usuarios de dashboard.</p>;
-  }
+const DELETE_INITIAL: DeleteUserState = { ok: false, error: null };
+
+function DeleteButton({ user }: { user: TenantUser }) {
+  const [state, formAction, pending] = useActionState(deleteDashboardUser, DELETE_INITIAL);
+
   return (
-    <ul className="space-y-3">
-      {users.map((u) => (
-        <li
-          key={u.id}
-          className="flex items-center justify-between gap-3 border-b border-neutral-100 pb-3 last:border-0 last:pb-0"
+    <div className="text-right">
+      <form
+        action={formAction}
+        onSubmit={(e) => {
+          if (
+            !confirm(
+              `¿Eliminar a ${user.email ?? "este usuario"}? Perderá el acceso al dashboard definitivamente.`
+            )
+          ) {
+            e.preventDefault();
+          }
+        }}
+      >
+        <input type="hidden" name="user_id" value={user.id} />
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg border border-red-200 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
         >
-          <div>
-            <p className="text-sm text-neutral-800">{u.email ?? "—"}</p>
-            <p className="text-[11px] text-neutral-400">
-              rol: {u.role} · último ingreso:{" "}
-              {u.lastSignInAt ? new Date(u.lastSignInAt).toLocaleString("es-CO") : "nunca"}
-            </p>
-          </div>
-          <ResetButton user={u} />
-        </li>
-      ))}
-    </ul>
+          {pending ? "Eliminando…" : "Eliminar"}
+        </button>
+      </form>
+      {state.error && <p className="mt-1 text-[11px] text-red-600">{state.error}</p>}
+    </div>
+  );
+}
+
+const CREATE_INITIAL: CreateUserState = {
+  ok: false,
+  error: null,
+  tempPassword: null,
+  email: null,
+};
+
+function CreateUserForm({ tenantId }: { tenantId: string }) {
+  const [state, formAction, pending] = useActionState(createDashboardUser, CREATE_INITIAL);
+
+  return (
+    <div className="border-t border-neutral-100 pt-4">
+      <p className="mb-2 text-xs font-medium text-neutral-500">Agregar usuario</p>
+      <form action={formAction} className="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="tenant_id" value={tenantId} />
+        <input
+          type="email"
+          name="email"
+          required
+          placeholder="correo@cliente.com"
+          className="min-w-52 flex-1 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm"
+        />
+        <select
+          name="role"
+          defaultValue="agent"
+          className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm"
+        >
+          <option value="agent">Agente</option>
+          <option value="admin">Administrador</option>
+        </select>
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {pending ? "Creando…" : "Crear usuario"}
+        </button>
+      </form>
+      {state.ok && state.tempPassword && (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
+          <p className="text-[11px] text-amber-800">
+            Usuario {state.email} creado. Contraseña temporal (cópiala ahora, no se
+            vuelve a mostrar):
+          </p>
+          <code className="mt-1 block select-all rounded bg-white px-2 py-1 text-sm font-semibold text-neutral-900">
+            {state.tempPassword}
+          </code>
+        </div>
+      )}
+      {state.error && <p className="mt-1 text-[11px] text-red-600">{state.error}</p>}
+    </div>
+  );
+}
+
+export function UsersSection({ tenantId, users }: { tenantId: string; users: TenantUser[] }) {
+  return (
+    <div className="space-y-4">
+      {users.length === 0 ? (
+        <p className="text-sm text-neutral-400">Este cliente no tiene usuarios de dashboard.</p>
+      ) : (
+        <ul className="space-y-3">
+          {users.map((u) => (
+            <li
+              key={u.id}
+              className="flex items-center justify-between gap-3 border-b border-neutral-100 pb-3 last:border-0 last:pb-0"
+            >
+              <div>
+                <p className="text-sm text-neutral-800">{u.email ?? "—"}</p>
+                <p className="text-[11px] text-neutral-400">
+                  rol: {u.role} · último ingreso:{" "}
+                  {u.lastSignInAt ? new Date(u.lastSignInAt).toLocaleString("es-CO") : "nunca"}
+                </p>
+              </div>
+              <div className="flex items-start gap-2">
+                <ResetButton user={u} />
+                <DeleteButton user={u} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <CreateUserForm tenantId={tenantId} />
+    </div>
   );
 }

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
-import { closeConversation } from "./actions";
+import { closeConversation, deleteConversation } from "./actions";
 
 export type ConversationRow = {
   id: string;
@@ -72,12 +72,22 @@ export function ConversationsClient({
   if (!supabaseRef.current) supabaseRef.current = createBrowserSupabase();
   const supabase = supabaseRef.current;
 
-  // Reconciliar la selección con la lista refrescada.
+  // Reconciliar la selección con la lista refrescada (si desapareció — p. ej.
+  // eliminada — se selecciona la primera).
   useEffect(() => {
     setSelected((cur) =>
-      cur ? initialConversations.find((c) => c.id === cur.id) ?? cur : initialConversations[0] ?? null
+      cur
+        ? initialConversations.find((c) => c.id === cur.id) ?? initialConversations[0] ?? null
+        : initialConversations[0] ?? null
     );
   }, [initialConversations]);
+
+  // Auto-scroll al fondo del panel de mensajes (al cargar y con cada mensaje).
+  const messagesRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   // Realtime de la lista: cualquier cambio en conversaciones refresca el server component.
   useEffect(() => {
@@ -133,7 +143,7 @@ export function ConversationsClient({
   return (
     <div className="grid gap-4 md:grid-cols-[280px_1fr]">
       {/* Lista de conversaciones */}
-      <div className="space-y-2">
+      <div className="max-h-[calc(100dvh-11rem)] space-y-2 overflow-y-auto pr-1">
         {initialConversations.length === 0 && (
           <p className="rounded-2xl border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-400">
             Aún no hay conversaciones.
@@ -164,7 +174,7 @@ export function ConversationsClient({
 
       {/* Detalle (solo lectura) */}
       {selected ? (
-        <div className="flex min-h-[480px] flex-col rounded-2xl border border-neutral-200 bg-white">
+        <div className="flex h-[calc(100dvh-11rem)] min-h-[480px] flex-col rounded-2xl border border-neutral-200 bg-white">
           <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
             <p className="text-sm font-medium text-neutral-900">{selected.customer_phone}</p>
             <div className="flex items-center gap-2">
@@ -191,9 +201,29 @@ export function ConversationsClient({
                   </button>
                 </form>
               )}
+              <form
+                action={deleteConversation}
+                onSubmit={(e) => {
+                  if (
+                    !confirm(
+                      "¿Eliminar esta conversación? Se borran todos sus mensajes y tickets DEFINITIVAMENTE (las órdenes creadas no se tocan)."
+                    )
+                  ) {
+                    e.preventDefault();
+                  }
+                }}
+              >
+                <input type="hidden" name="conversation_id" value={selected.id} />
+                <button
+                  type="submit"
+                  className="rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
+                >
+                  Eliminar
+                </button>
+              </form>
             </div>
           </div>
-          <div className="flex-1 space-y-2 overflow-auto p-4">
+          <div ref={messagesRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
             {messages.map((m) => (
               <div
                 key={m.id}

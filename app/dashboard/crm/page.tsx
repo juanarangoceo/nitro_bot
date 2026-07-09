@@ -1,4 +1,5 @@
 import { getDashboardContext } from "@/lib/dashboard/context";
+import { ClearCrmButton } from "./clear-button";
 
 export default async function CrmPage() {
   const { supabase } = await getDashboardContext();
@@ -20,12 +21,15 @@ export default async function CrmPage() {
           <h1 className="text-2xl font-semibold text-neutral-900">CRM</h1>
           <p className="text-sm text-neutral-500">{rows.length} clientes</p>
         </div>
-        <a
-          href="/dashboard/crm/export"
-          className="rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
-        >
-          Exportar CSV
-        </a>
+        <div className="flex items-center gap-2">
+          <a
+            href="/dashboard/crm/export"
+            className="rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
+          >
+            Exportar CSV
+          </a>
+          <ClearCrmButton count={rows.length} />
+        </div>
       </header>
 
       <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
