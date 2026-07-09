@@ -201,20 +201,66 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   conectar"). Probar requiere `APP_BASE_URL` en Vercel y una app del Dev Dashboard
   con flujo de instalación heredado.
 
+- **Sesión 2026-07-09 (todo DESPLEGADO en producción — primer deploy en ~29
+  días, así que v2 + specs 07/08 quedaron en vivo junto con esto)**:
+  - **Preflight**: env vars de Vercel confirmadas (`NEXT_PUBLIC_*`, `CRON_SECRET`,
+    `APP_BASE_URL`; falta solo `META_APP_ID`, opcional). Super-admin
+    `juanarangopm@gmail.com` existe desde el 2026-06-06. Repo linkeado a Vercel
+    (`seller360grados-projects/nitro-bot`; CLI autenticada).
+  - **Usuarios desde `/admin`** (detalle del cliente): crear usuario del
+    dashboard (contraseña temporal mostrada una vez; email duplicado = error,
+    jamás pisa cuentas; rollback si falla el insert) y eliminar usuario
+    (protegido: nunca el último del tenant). Solo `app_users` — jamás toca
+    `platform_admins`. Todo auditado.
+  - **Branding por tenant** (migración #12): `tenants.logo_url`/`brand_color`
+    + bucket **público** `branding`. Card "Personalización del dashboard" en
+    /admin (logo máx 2 MB, color de acento). El dashboard muestra el logo en la
+    sidebar y aplica el color vía var CSS `--brand` (fallback #171717 = cero
+    cambio si no se configura).
+  - **UX del dashboard**: paneles de Conversaciones/Tickets con altura acotada,
+    scroll interno y auto-scroll al último mensaje; botón "Eliminar" conversación
+    (cascade borra mensajes/tickets; órdenes sobreviven con FK null) y "Vaciar
+    CRM" con confirmación (RLS: solo el propio tenant; verificado sin fuga).
+  - **Galería de fotos** (migración #13): `products.image_urls` (jsonb) desde
+    `media(first:10)` de la Admin API; la herramienta `enviar_imagen_producto`
+    acepta `cantidad` (1-4) — la IA manda varias fotos SOLO si el cliente pide
+    más ángulos (regla en el prompt). Backfill dev re-corrido: 901 productos,
+    613 con galería. El tester muestra todas las fotos.
+  - **Feature D HECHA — Resend** (`lib/notify/email.ts`, REST sin SDK):
+    correo al equipo del cliente en (a) conversación NUEVA y (b) ticket
+    escalado (enganchado en `escalateToHuman`, punto único). Campo "Correo de
+    notificaciones" editable en /admin (vacío = sin avisos). Best-effort
+    blindado (jamás lanza; fallos a `event_log` `notify_failure`). Envío real
+    verificado. `RESEND_API_KEY`/`NOTIFY_FROM_EMAIL` en `.env.local` y Vercel;
+    remitente aún `onboarding@resend.dev` (solo entrega al dueño de la cuenta
+    Resend — cambiar al verificar dominio propio).
+  - **Recordatorios automáticos** (migración #14): máx 2 por episodio de
+    silencio, dentro de la ventana de 24h de WhatsApp — fase 1 a ~4h (Gemini
+    retoma la conversación real, termina en pregunta) y fase 2 a ~22h (última:
+    despedida sin presión). Exclusiones: no `bot_active`, `is_test`, último
+    mensaje no-bot, orden ya creada, tenant inactivo/al límite/apagado
+    (`tenants.reminders_enabled`, toggle en /admin). `lib/ai/reminders.ts` +
+    cron horario `/api/cron/reminders` (CRON_SECRET) en vercel.json. El worker
+    resetea `reminder_count` cuando el cliente escribe. Traza `reminder` en
+    event_log. Verificado con 6 escenarios contra la DB real.
+  - **Reset de contador** en /admin ("Reiniciar contador a 0", auditado) para
+    entregar el cliente en cero tras las pruebas.
+
 ### 🔜 Pendiente
+- **Vigilar el cron horario de recordatorios**: el deploy lo aceptó, pero
+  confirmar al día siguiente que hay eventos `reminder` en event_log
+  (/admin/health). Si el plan de Vercel lo limita a diario, disparar
+  `/api/cron/reminders` desde cron-job.org con el Bearer del CRON_SECRET.
+- **Resend con dominio propio**: verificar dominio en Resend y cambiar
+  `NOTIFY_FROM_EMAIL` (hoy `onboarding@resend.dev` solo entrega al correo del
+  dueño de la cuenta).
 - **Spec 07 diferidas**: Feature C (Telegram `lib/notify/telegram.ts` +
-  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`), Feature D (Resend
-  `lib/notify/email.ts` + `RESEND_API_KEY`/`NOTIFY_FROM_EMAIL`; la columna
-  `notification_email` ya existe), Feature H (backup semanal a Drive).
-  Engancharlas en `lib/ai/escalation.ts` (punto único de tickets) y `event_log`.
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`) y Feature H (backup semanal a
+  Drive). Feature D (Resend) YA está hecha. Engancharlas en
+  `lib/ai/escalation.ts` (punto único de tickets) y `event_log`.
 - **Probar en vivo spec 07 y 08** (escalado por fallo, /admin/health, probador,
-  flujo OAuth completo con una app del Dev Dashboard).
-- **Vercel**: agregar `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  (dashboard/Realtime), `CRON_SECRET` (cron), `APP_BASE_URL`/`WEBHOOK_BASE_URL`
-  (alta: registra webhooks de Shopify) y, opcional, `META_APP_ID` (subida de la
-  foto de perfil de WhatsApp en el alta). Redeploy.
-- **Crear el primer super-admin**: `npm run seed:platform-admin`
-  (`SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`). No hay UI para el primero.
+  flujo OAuth completo con una app del Dev Dashboard). Vercel opcional:
+  `META_APP_ID` (subida de la foto de perfil de WhatsApp en el alta).
 - **Probar v2 en vivo**: alta de un cliente dev con el botón (9 pasos en verde),
   multimedia (audio entrante visible, foto de producto saliente, agente enviando
   foto/audio), conversaciones en vivo y métricas de producto.
@@ -228,8 +274,8 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
      `backfill:catalog` y `register:shopify-webhooks` contra el dominio real.
   2. Número de WhatsApp de producción en Meta (Business verificado) → `seed:wa` con
      el `phone_number_id` y token de larga duración reales; re-suscribir el webhook.
-  3. Cargar `CRON_SECRET` y las `NEXT_PUBLIC_*` en Vercel; crear usuarios del
-     dashboard (`seed:dashboard-user`).
+  3. Crear usuarios del dashboard (desde /admin o `seed:dashboard-user`); las
+     env vars de Vercel ya están cargadas.
   4. `npm run verify` apuntando al tenant de producción; smoke test e2e (mensaje
      real → respuesta, orden COD de prueba) y revisar `/api/health`.
 
@@ -243,11 +289,15 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
 app/api/webhooks/shopify/route.ts   webhook catálogo (HMAC + after())
 app/api/webhooks/meta/route.ts      webhook WhatsApp (handshake + firma + encola)
 app/api/cron/reset-counters/route.ts  cron mensual del contador (CRON_SECRET)
+app/api/cron/reminders/route.ts     cron horario de recordatorios (CRON_SECRET)
 app/api/health/route.ts             health check (app + DB)
 app/api/dev/chat/route.ts           endpoint interno de prueba del asesor (dev)
 lib/queue.ts                        cola de fondo (after() hoy, QStash después)
 lib/whatsapp/meta.ts                Cloud API: enviar/leer/descargar media + parsing
 lib/ai/worker.ts                    procesa entrante (idempotencia/debounce/gate/IA)
+lib/ai/reminders.ts                 follow-ups (máx 2, ventana 24h, Gemini sin tools)
+lib/ai/escalation.ts                escalado único a humano (ticket + correo)
+lib/notify/email.ts                 correos al equipo del cliente (Resend REST)
 app/login/page.tsx                  login del dashboard (Server Action)
 app/actions/auth.ts                 signIn/signOut (Server Actions)
 app/dashboard/layout.tsx            layout protegido + nav por módulos
@@ -261,7 +311,7 @@ app/admin/*                         Panel de Plataforma (super-admin): clientes,
                                     alta con un botón, detalle, resumen, actions
 lib/admin/context.ts                gate super-admin (service_role, NO RLS) + audit_log
 lib/provisioning/*                  aprovisionamiento compartido CLI↔panel (provisionTenant)
-lib/storage.ts                      Supabase Storage de media (subir + firmar URL)
+lib/storage.ts                      Storage: media privada (firmar URL) + logo público
 proxy.ts                            Next 16: refresca sesión + protege /dashboard y /admin
 lib/dashboard/context.ts            resuelve usuario→tenant (RLS) del dashboard
 lib/supabase/server.ts              cliente SSR authenticated (RLS) del dashboard
@@ -285,7 +335,7 @@ scripts/register-shopify-webhooks.ts  registra webhooks products/* (idempotente)
 scripts/seed-dashboard-user.ts      alta de usuario del dashboard (auth + app_users)
 scripts/verify.ts                   suite de verificación (RAG + fuga RLS)
 scripts/backfill-catalog.ts         carga inicial del catálogo (tsx)
-vercel.json                         cron del reseteo mensual del contador
+vercel.json                         crons: reseteo mensual + recordatorios horario
 supabase/migrations/*.sql           esquema + RLS + grants
 ```
 
