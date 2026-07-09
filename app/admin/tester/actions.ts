@@ -133,7 +133,10 @@ export async function sendTesterMessage(
     // la URL en lugar de mandarla).
     const images = result.toolTrace
       .filter((t) => t.name === "enviar_imagen_producto")
-      .map((t) => (t.response as { imagen?: string })?.imagen)
+      .flatMap((t) => {
+        const r = t.response as { imagen?: string; imagenes?: string[] } | undefined;
+        return r?.imagenes ?? (r?.imagen ? [r.imagen] : []);
+      })
       .filter((u): u is string => !!u);
 
     return {

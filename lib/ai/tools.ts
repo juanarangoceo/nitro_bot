@@ -114,7 +114,7 @@ export const toolDeclarations = [
   {
     name: "enviar_imagen_producto",
     description:
-      "Envía al cliente la foto de un producto del catálogo por WhatsApp. Úsala cuando recomiendes un producto y convenga que el cliente lo vea. Pasa el shopify_id (campo 'id' que devuelve buscar_productos).",
+      "Envía al cliente fotos de un producto del catálogo por WhatsApp. Úsala cuando recomiendes un producto y convenga que el cliente lo vea. Pasa el shopify_id (campo 'id' que devuelve buscar_productos).",
     parameters: {
       type: "object",
       properties: {
@@ -122,6 +122,11 @@ export const toolDeclarations = [
         mensaje: {
           type: "string",
           description: "Texto corto opcional que acompaña la foto (caption).",
+        },
+        cantidad: {
+          type: "number",
+          description:
+            "Cuántas fotos enviar (1 a 4, default 1). Usa más de 1 SOLO si el cliente pide ver más fotos o ángulos del producto.",
         },
       },
       required: ["producto_id"],
@@ -250,43 +255,64 @@ async function crearOrden(ctx: ToolContext, args: Args) {
   });
 }
 
-// Envía la foto del producto al cliente por WhatsApp (link = imagen de Shopify).
-// Persiste un mensaje saliente del bot (msg_type image). En el sandbox del editor
-// (sin wa/customerPhone) hace no-op y lo reporta.
+// Envía foto(s) del producto al cliente por WhatsApp (link = imagen de Shopify).
+// `cantidad` (1-4, default 1) permite mandar la galería cuando el cliente pide
+// más fotos. Persiste un mensaje saliente del bot (msg_type image) por cada
+// foto. En el sandbox del editor (sin wa/customerPhone) hace no-op y lo reporta.
 async function enviarImagenProducto(ctx: ToolContext, args: Args) {
   const productoId = String(args.producto_id ?? "");
   const caption = args.mensaje ? String(args.mensaje) : undefined;
+  const cantidad = Math.min(4, Math.max(1, Math.trunc(Number(args.cantidad)) || 1));
   const supabase = createAdminClient();
   const { data: prod } = await supabase
     .from("products")
-    .select("title, image_url")
+    .select("title, image_url, image_urls")
     .eq("tenant_id", ctx.tenant.id)
     .eq("shopify_id", productoId)
     .maybeSingle();
   if (!prod) return { enviado: false, error: "Producto no encontrado." };
-  if (!prod.image_url) return { enviado: false, error: "El producto no tiene imagen." };
+
+  // Principal primero, luego la galería, sin duplicados.
+  const gallery = Array.isArray(prod.image_urls) ? (prod.image_urls as string[]) : [];
+  const urls = [
+    ...new Set([...(prod.image_url ? [prod.image_url] : []), ...gallery]),
+  ].slice(0, cantidad);
+  if (urls.length === 0) return { enviado: false, error: "El producto no tiene imagen." };
 
   if (!ctx.wa || !ctx.customerPhone || !ctx.conversationId) {
-    // Sandbox del editor: no hay a quién enviar.
-    return { enviado: false, nota: "sin_destinatario_dev", imagen: prod.image_url };
+    // Sandbox del editor: no hay a quién enviar. `imagen` se mantiene por
+    // compatibilidad; `imagenes` trae la lista completa.
+    return {
+      enviado: false,
+      nota: "sin_destinatario_dev",
+      imagen: urls[0],
+      imagenes: urls,
+    };
   }
 
+  let sent = 0;
   try {
-    const waId = await sendImage(ctx.wa, ctx.customerPhone, {
-      link: prod.image_url,
-      caption,
-    });
-    await supabase.from("messages").insert({
-      tenant_id: ctx.tenant.id,
-      conversation_id: ctx.conversationId,
-      wa_message_id: waId,
-      sender: "bot",
-      msg_type: "image",
-      content: caption ?? `[foto] ${prod.title ?? ""}`.trim(),
-      media_url: prod.image_url,
-    });
-    return { enviado: true, titulo: prod.title };
+    for (const [i, url] of urls.entries()) {
+      const waId = await sendImage(ctx.wa, ctx.customerPhone, {
+        link: url,
+        caption: i === 0 ? caption : undefined,
+      });
+      await supabase.from("messages").insert({
+        tenant_id: ctx.tenant.id,
+        conversation_id: ctx.conversationId,
+        wa_message_id: waId,
+        sender: "bot",
+        msg_type: "image",
+        content: i === 0 ? caption ?? `[foto] ${prod.title ?? ""}`.trim() : `[foto] ${prod.title ?? ""}`.trim(),
+        media_url: url,
+      });
+      sent++;
+    }
+    return { enviado: true, titulo: prod.title, fotos_enviadas: sent };
   } catch (e) {
+    if (sent > 0) {
+      return { enviado: true, titulo: prod.title, fotos_enviadas: sent, error: (e as Error).message };
+    }
     return { enviado: false, error: (e as Error).message };
   }
 }

@@ -17,6 +17,7 @@ const PRODUCT_FIELDS = `
   status
   totalInventory
   featuredImage { url }
+  media(first: 10) { edges { node { mediaContentType ... on MediaImage { image { url } } } } }
   priceRangeV2 { minVariantPrice { amount } }
   variants(first: 1) { edges { node { id compareAtPrice } } }
 `;
@@ -31,9 +32,22 @@ type ProductNode = {
   status: string | null;
   totalInventory: number | null;
   featuredImage: { url: string } | null;
+  media: {
+    edges: { node: { mediaContentType: string; image?: { url: string } | null } }[];
+  };
   priceRangeV2: { minVariantPrice: { amount: string } } | null;
   variants: { edges: { node: { id: string; compareAtPrice: string | null } }[] };
 };
+
+// Galería ordenada de URLs: la principal (featuredImage) de primera, luego el
+// resto de imágenes de media, sin duplicados.
+function buildImageUrls(n: ProductNode): string[] {
+  const gallery = (n.media?.edges ?? [])
+    .filter((e) => e.node.mediaContentType === "IMAGE" && e.node.image?.url)
+    .map((e) => e.node.image!.url);
+  const all = n.featuredImage?.url ? [n.featuredImage.url, ...gallery] : gallery;
+  return [...new Set(all)];
+}
 
 // Texto que se convierte en embedding: lo que un cliente preguntaría.
 function buildEmbeddingText(n: ProductNode): string {
@@ -60,6 +74,7 @@ async function upsertProductNode(tenantId: string, n: ProductNode): Promise<void
         : null,
       stock: n.totalInventory,
       image_url: n.featuredImage?.url ?? null,
+      image_urls: buildImageUrls(n),
       status: (n.status ?? "active").toLowerCase(),
       embedding: embedding as unknown as string, // pgvector acepta el array
       updated_at: new Date().toISOString(),
