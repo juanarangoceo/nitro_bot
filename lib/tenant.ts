@@ -13,6 +13,7 @@ export type Tenant = {
   wa_phone_number_id: string | null;
   wa_business_account_id: string | null;
   system_prompt: string | null;
+  business_info: string | null;
   ai_model: string;
   embedding_model: string;
   embedding_dim: number;

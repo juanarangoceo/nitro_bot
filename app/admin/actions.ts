@@ -210,6 +210,29 @@ export async function updateSystemPromptAdmin(
   return { ok: true, error: null };
 }
 
+// ── Editar la información fija de la empresa (envíos, garantías, etc.) ──────
+// A diferencia del prompt, vacío es válido: borra la sección del system prompt.
+export async function updateBusinessInfoAdmin(
+  _prev: PromptState,
+  fd: FormData
+): Promise<PromptState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  const info = String(fd.get("business_info") ?? "").trim();
+  if (!tenantId) return { ok: false, error: "Falta el tenant." };
+  if (info.length > 4000) return { ok: false, error: "Muy larga (máx. 4000 caracteres)." };
+
+  const { error } = await admin
+    .from("tenants")
+    .update({ business_info: info || null })
+    .eq("id", tenantId);
+  if (error) return { ok: false, error: "No se pudo guardar." };
+
+  await logAudit(admin, { adminId, action: "update_business_info", tenantId });
+  revalidatePath(`/admin/clients/${tenantId}`);
+  return { ok: true, error: null };
+}
+
 // ── Rotar credenciales (re-ejecutar partes del alta) ────────────────────────
 export type RotateState = { ok: boolean; error: string | null };
 

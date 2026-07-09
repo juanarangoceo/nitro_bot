@@ -7,6 +7,7 @@ import { createAdminClient } from "../supabase/admin";
 import { searchProducts } from "./rag";
 import { escalateToHuman } from "./escalation";
 import { createCodOrder, type OrderItem, type CustomerData } from "../shopify/orders";
+import { resolveDepartment } from "../shopify/colombia";
 import { sendImage, type WaCreds } from "../whatsapp/meta";
 import type { ShopifyCreds } from "../shopify/client";
 import type { Tenant } from "../tenant";
@@ -23,6 +24,9 @@ export type ToolContext = {
   // imágenes) EXCEPTO crear_orden (simulada, sin tocar Shopify) y
   // escalar_a_humano (marca el resultado sin crear ticket real).
   testMode?: boolean;
+  // Herramientas ya ejecutadas en este turno (lo llena executeTool). Permite
+  // guards como "no escalar por fuera_de_catalogo sin haber buscado antes".
+  calledTools?: Set<string>;
 };
 
 // --- Declaraciones para Gemini (subset OpenAPI) ---------------------------
@@ -30,7 +34,7 @@ export const toolDeclarations = [
   {
     name: "buscar_productos",
     description:
-      "Busca productos en el catálogo real de la tienda por similitud semántica. Úsala siempre que el cliente pregunte por productos, características, precios o disponibilidad.",
+      "Busca productos en el catálogo real de la tienda por similitud semántica. Úsala siempre que el cliente pregunte por productos, características, precios o disponibilidad. Devuelve solo productos disponibles para la venta, con su descripción resumida.",
     parameters: {
       type: "object",
       properties: {
@@ -43,8 +47,9 @@ export const toolDeclarations = [
     },
   },
   {
-    name: "ver_stock",
-    description: "Consulta la disponibilidad (stock) actual de un producto por su id.",
+    name: "ver_detalle_producto",
+    description:
+      "Devuelve la ficha completa de UN producto: descripción completa, precio y disponibilidad. Úsala cuando el cliente pida más detalles, especificaciones o medidas de un producto concreto que ya encontraste con buscar_productos.",
     parameters: {
       type: "object",
       properties: {
@@ -101,11 +106,20 @@ export const toolDeclarations = [
           type: "object",
           properties: {
             nombre: { type: "string" },
-            telefono: { type: "string" },
+            telefono: {
+              type: "string",
+              description:
+                "Número de contacto para la entrega. OMÍTELO si el cliente quiere que lo contacten a este mismo WhatsApp.",
+            },
             direccion: { type: "string" },
             ciudad: { type: "string" },
+            departamento: {
+              type: "string",
+              description:
+                "Departamento de Colombia (p. ej. Antioquia). Llénalo SOLO si el cliente lo dijo o se lo preguntaste; para ciudades principales el sistema lo deduce solo.",
+            },
           },
-          required: ["nombre", "telefono", "direccion", "ciudad"],
+          required: ["nombre", "direccion", "ciudad"],
         },
       },
       required: ["items", "datos_cliente"],
@@ -135,13 +149,13 @@ export const toolDeclarations = [
   {
     name: "escalar_a_humano",
     description:
-      "Escala la conversación a un agente humano (reclamo, fuera de catálogo, o el cliente lo pide). El asesor deja de responder hasta que se resuelva.",
+      "Escala la conversación a un agente humano y el asesor DEJA de responder: es el ÚLTIMO recurso. Úsala SOLO si: (a) el cliente tiene un reclamo o problema con un pedido ya realizado, (b) pide explícitamente hablar con una persona, o (c) pide un producto que confirmaste que NO existe llamando buscar_productos en este mismo turno. NUNCA escales por preguntas de envíos, garantías, devoluciones, precios o disponibilidad: eso lo respondes tú con las herramientas y la información de la empresa.",
     parameters: {
       type: "object",
       properties: {
         motivo: {
           type: "string",
-          description: "reclamo | fuera_de_catalogo | pide_humano | otro",
+          enum: ["reclamo", "fuera_de_catalogo", "pide_humano", "otro"],
         },
       },
       required: ["motivo"],
@@ -152,6 +166,18 @@ export const toolDeclarations = [
 // --- Implementaciones ------------------------------------------------------
 type Args = Record<string, unknown>;
 
+// Recorta la descripción a ~350 chars en límite de palabra para no inflar el
+// turno; la ficha completa se pide con ver_detalle_producto.
+const SUMMARY_MAX = 350;
+function resumir(desc: string | null): string | null {
+  const text = desc?.trim();
+  if (!text) return null;
+  if (text.length <= SUMMARY_MAX) return text;
+  const cut = text.slice(0, SUMMARY_MAX);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${cut.slice(0, lastSpace > 200 ? lastSpace : SUMMARY_MAX)}…`;
+}
+
 async function buscarProductos(ctx: ToolContext, args: Args) {
   const productos = await searchProducts(ctx.tenant.id, String(args.consulta ?? ""), 5);
   return {
@@ -159,21 +185,31 @@ async function buscarProductos(ctx: ToolContext, args: Args) {
       id: p.shopify_id,
       titulo: p.title,
       precio: p.price,
-      stock: p.stock,
+      descripcion: resumir(p.description),
+      // match_products ya filtra por status active.
+      disponible: true,
     })),
   };
 }
 
-async function verStock(ctx: ToolContext, args: Args) {
+async function verDetalleProducto(ctx: ToolContext, args: Args) {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("products")
-    .select("title, stock")
+    .select("title, description, price, status")
     .eq("tenant_id", ctx.tenant.id)
     .eq("shopify_id", String(args.producto_id))
     .maybeSingle();
   if (!data) return { encontrado: false };
-  return { encontrado: true, titulo: data.title, stock: data.stock };
+  const disponible = data.status === "active";
+  return {
+    encontrado: true,
+    titulo: data.title,
+    precio: data.price,
+    descripcion: data.description?.trim() || null,
+    disponible,
+    ...(disponible ? {} : { nota: "Este producto no está disponible para la venta." }),
+  };
 }
 
 async function verHistorialCliente(ctx: ToolContext, args: Args) {
@@ -219,6 +255,14 @@ async function crearOrden(ctx: ToolContext, args: Args) {
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, error: "Sin items." };
   }
+  // Si la IA omitió el teléfono ("al mismo WhatsApp"), el servidor pone el
+  // número real del canal — nunca lo decide el modelo.
+  if (!cliente.telefono?.trim() && ctx.customerPhone) {
+    cliente.telefono = ctx.customerPhone;
+  }
+  if (!cliente.telefono?.trim()) {
+    return { ok: false, error: "Falta el teléfono de contacto." };
+  }
   // Modo test (probador del /admin): el total se calcula igual (server-side,
   // desde el catálogo) pero NO se crea nada en Shopify ni en orders.
   if (ctx.testMode) {
@@ -234,11 +278,20 @@ async function crearOrden(ctx: ToolContext, args: Args) {
       if (!prod) return { ok: false, error: `Producto ${it.producto_id} no existe.` };
       subtotal += Number(prod.price ?? 0) * Math.max(1, Number(it.cantidad) || 1);
     }
+    // Misma validación de departamento que la orden real, para probar el flujo.
+    const department = resolveDepartment(cliente.ciudad ?? "", cliente.departamento);
+    if (!department) {
+      return {
+        ok: false,
+        error: `FALTA_DEPARTAMENTO: no reconozco la ciudad "${cliente.ciudad}". Pregunta al cliente en qué departamento está y vuelve a llamar crear_orden con el campo departamento.`,
+      };
+    }
     const envio = calcularEnvio(ctx, { total_pedido: subtotal }) as { costo_envio: number };
     return {
       ok: true,
       simulada: true,
       total: subtotal + envio.costo_envio,
+      departamento: department.name,
       nota: "Orden de PRUEBA: no se creó en Shopify.",
     };
   }
@@ -319,6 +372,14 @@ async function enviarImagenProducto(ctx: ToolContext, args: Args) {
 
 async function escalarAHumano(ctx: ToolContext, args: Args) {
   const motivo = String(args.motivo ?? "otro");
+  // Guard server-side: "fuera de catálogo" exige haber buscado en este turno.
+  if (motivo === "fuera_de_catalogo" && !ctx.calledTools?.has("buscar_productos")) {
+    return {
+      escalado: false,
+      error:
+        "Primero busca en el catálogo con buscar_productos; escala solo si confirmas que no existe.",
+    };
+  }
   if (ctx.testMode) {
     // Probador: se marca el resultado en la UI sin crear ticket real.
     return { escalado: true, motivo, simulado: true };
@@ -337,7 +398,7 @@ async function escalarAHumano(ctx: ToolContext, args: Args) {
 
 const HANDLERS: Record<string, (ctx: ToolContext, args: Args) => unknown> = {
   buscar_productos: buscarProductos,
-  ver_stock: verStock,
+  ver_detalle_producto: verDetalleProducto,
   ver_historial_cliente: verHistorialCliente,
   calcular_envio: calcularEnvio,
   crear_orden: crearOrden,
@@ -352,5 +413,7 @@ export async function executeTool(
 ): Promise<unknown> {
   const handler = HANDLERS[name];
   if (!handler) return { error: `Herramienta desconocida: ${name}` };
-  return await handler(ctx, args);
+  const result = await handler(ctx, args);
+  ctx.calledTools?.add(name);
+  return result;
 }

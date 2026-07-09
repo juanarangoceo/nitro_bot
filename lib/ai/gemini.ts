@@ -29,7 +29,12 @@ function endpoint(model: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 }
 
-async function generate(model: string, systemPrompt: string, contents: Content[]) {
+async function generate(
+  model: string,
+  systemPrompt: string,
+  contents: Content[],
+  opts?: { disableTools?: boolean }
+) {
   const res = await fetch(endpoint(model), {
     method: "POST",
     headers: {
@@ -40,6 +45,11 @@ async function generate(model: string, systemPrompt: string, contents: Content[]
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents,
       tools: [{ functionDeclarations: toolDeclarations }],
+      // mode NONE fuerza una respuesta de texto (cierre del turno) sin quitar
+      // las declaraciones: se usa para el intento final tras agotar el loop.
+      ...(opts?.disableTools
+        ? { toolConfig: { functionCallingConfig: { mode: "NONE" } } }
+        : {}),
       generationConfig: { thinkingConfig: { thinkingLevel: THINKING_LEVEL } },
     }),
   });
@@ -73,7 +83,15 @@ export async function runAssistant(params: {
 }): Promise<AssistantResult> {
   const { tenant, conversationId, shopify, wa, customerPhone, testMode, contents } = params;
   const systemPrompt = buildSystemPrompt(tenant);
-  const ctx: ToolContext = { tenant, conversationId, shopify, wa, customerPhone, testMode };
+  const ctx: ToolContext = {
+    tenant,
+    conversationId,
+    shopify,
+    wa,
+    customerPhone,
+    testMode,
+    calledTools: new Set<string>(),
+  };
   const working: Content[] = [...contents];
   const toolTrace: AssistantResult["toolTrace"] = [];
 
@@ -109,6 +127,21 @@ export async function runAssistant(params: {
       responseParts.push({ functionResponse: fr });
     }
     working.push({ role: "user", parts: responseParts });
+  }
+
+  // Loop agotado: antes de rendirse (y de que el worker escale a humano), UNA
+  // llamada final con function calling apagado para que el modelo cierre el
+  // turno con lo que ya recopiló. Solo si también esto falla queda `exhausted`.
+  try {
+    const json = await generate(tenant.ai_model, systemPrompt, working, { disableTools: true });
+    const parts = (json.candidates?.[0]?.content?.parts ?? []) as GeminiPart[];
+    const text = parts
+      .map((p) => (typeof p.text === "string" ? p.text : ""))
+      .join("")
+      .trim();
+    if (text) return { text, toolTrace };
+  } catch (e) {
+    console.error("[gemini] intento final sin tools falló:", e);
   }
 
   return {

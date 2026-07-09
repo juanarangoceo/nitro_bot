@@ -26,7 +26,7 @@ import {
   type WaValue,
   type DownloadedMedia,
 } from "../whatsapp/meta";
-import { uploadWaMedia } from "../storage";
+import { uploadWaMedia, downloadWaMedia } from "../storage";
 import type { Tenant, TenantSecrets } from "../tenant";
 
 const DEBOUNCE_MS = 8_000;
@@ -65,24 +65,76 @@ function shapeInbound(message: WaInboundMessage): InboundShape {
   }
 }
 
+type HistoryRow = {
+  id: string;
+  sender: string;
+  content: string | null;
+  media_path: string | null;
+  media_mime: string | null;
+};
+
+type InlineMedia = { mimeType: string; base64: string };
+
 // Convierte el historial de la conversación en `contents` para Gemini.
-// Para el mensaje actual, si hay media descargada, se adjunta inline (multimodal).
-function buildContents(
-  rows: { id: string; sender: string; content: string | null }[],
-  currentMessageId: string,
-  media: DownloadedMedia | null
-): Content[] {
+// Las filas presentes en `mediaById` llevan su media inline (multimodal).
+function buildContents(rows: HistoryRow[], mediaById: Map<string, InlineMedia>): Content[] {
   return rows.map((r) => {
     const role: Content["role"] = r.sender === "customer" ? "user" : "model";
-    if (r.id === currentMessageId && media) {
+    const inline = mediaById.get(r.id);
+    if (inline) {
       const parts: GeminiPart[] = [
-        { inlineData: { mimeType: media.mimeType, data: media.base64 } },
+        { inlineData: { mimeType: inline.mimeType, data: inline.base64 } },
       ];
       if (r.content) parts.push({ text: r.content });
       return { role, parts };
     }
     return { role, parts: [{ text: r.content ?? "" }] };
   });
+}
+
+// Media a adjuntar inline en este turno. No solo la del mensaje actual: con el
+// debounce "último gana", una foto seguida de un texto hacía que la foto llegara
+// a Gemini como "[imagen]" sin bytes. Se adjunta la media de TODOS los mensajes
+// del cliente posteriores a la última respuesta del bot (el turno pendiente),
+// con tope de piezas y de tamaño; la del mensaje actual ya está en memoria.
+const MAX_TURN_MEDIA = 3;
+const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
+
+async function collectTurnMedia(
+  history: HistoryRow[],
+  currentMessageId: string,
+  currentMedia: DownloadedMedia | null
+): Promise<Map<string, InlineMedia>> {
+  const mediaById = new Map<string, InlineMedia>();
+  let lastBotIdx = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].sender !== "customer") {
+      lastBotIdx = i;
+      break;
+    }
+  }
+  const pending = history.slice(lastBotIdx + 1).filter((r) => r.media_path);
+  for (const row of pending.slice(-MAX_TURN_MEDIA)) {
+    if (row.id === currentMessageId && currentMedia) {
+      mediaById.set(row.id, { mimeType: currentMedia.mimeType, base64: currentMedia.base64 });
+      continue;
+    }
+    const bytes = await downloadWaMedia(row.media_path!);
+    if (!bytes || bytes.length > MAX_MEDIA_BYTES) continue;
+    mediaById.set(row.id, {
+      mimeType: row.media_mime ?? "application/octet-stream",
+      base64: bytes.toString("base64"),
+    });
+  }
+  // El mensaje actual puede no tener media_path (upload a Storage fallido) pero
+  // sí media en memoria: nunca se pierde.
+  if (currentMedia && !mediaById.has(currentMessageId)) {
+    mediaById.set(currentMessageId, {
+      mimeType: currentMedia.mimeType,
+      base64: currentMedia.base64,
+    });
+  }
+  return mediaById;
 }
 
 // Mensaje cálido y resolutivo cuando el asesor queda trabado (NUNCA el
@@ -319,15 +371,16 @@ export async function processInboundMessage(params: {
   // solo mensajes posteriores al último cierre (closed_at).
   let historyQuery = supabase
     .from("messages")
-    .select("id, sender, content")
+    .select("id, sender, content, media_path, media_mime")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(MAX_HISTORY);
   if (historyCutoff) historyQuery = historyQuery.gt("created_at", historyCutoff);
   const { data: recent } = await historyQuery;
-  const history = (recent ?? []).reverse();
+  const history: HistoryRow[] = (recent ?? []).reverse();
 
-  const contents = buildContents(history, currentMessageId, media);
+  const mediaById = await collectTurnMedia(history, currentMessageId, media);
+  const contents = buildContents(history, mediaById);
 
   const shopify =
     tenant.shopify_domain && secrets.shopify_access_token

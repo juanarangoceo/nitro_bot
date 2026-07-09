@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import {
   updateSystemPromptAdmin,
+  updateBusinessInfoAdmin,
   rotateShopifyCreds,
   rotateWaCreds,
   configureWaProfile,
@@ -141,6 +142,43 @@ export function PromptEditor({
           className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
         >
           {pending ? "Guardando…" : "Guardar prompt"}
+        </button>
+        {state.ok && <span className="text-sm text-emerald-600">Guardado ✅</span>}
+        {state.error && <span className="text-sm text-red-600">{state.error}</span>}
+      </div>
+    </form>
+  );
+}
+
+export function BusinessInfoEditor({
+  tenantId,
+  initialInfo,
+}: {
+  tenantId: string;
+  initialInfo: string;
+}) {
+  const [state, action, pending] = useActionState(updateBusinessInfoAdmin, promptInit);
+  return (
+    <form action={action} className="space-y-3">
+      <input type="hidden" name="tenant_id" value={tenantId} />
+      <p className="text-[11px] text-neutral-500">
+        Envíos, garantías, devoluciones, horarios. El asesor responde estas preguntas con esta
+        información tal cual (máx. ~2000 caracteres recomendado). Vacío = sin sección.
+      </p>
+      <textarea
+        name="business_info"
+        defaultValue={initialInfo}
+        rows={8}
+        placeholder={"Ej.:\n- Envíos a toda Colombia, 2-5 días hábiles.\n- Garantía de 30 días por defectos de fábrica.\n- Cambios dentro de los 8 días con etiqueta puesta."}
+        className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+      />
+      <div className="flex items-center gap-3">
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+        >
+          {pending ? "Guardando…" : "Guardar información"}
         </button>
         {state.ok && <span className="text-sm text-emerald-600">Guardado ✅</span>}
         {state.error && <span className="text-sm text-red-600">{state.error}</span>}

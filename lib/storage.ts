@@ -67,6 +67,15 @@ export async function uploadTenantLogo(params: {
   return `${data.publicUrl}?v=${Date.now()}`;
 }
 
+// Descarga la media de un mensaje ya persistido (para re-adjuntarla inline a
+// Gemini cuando el turno coalesce varios mensajes). Best-effort: null si falla.
+export async function downloadWaMedia(path: string): Promise<Buffer | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.storage.from(BUCKET).download(path);
+  if (error || !data) return null;
+  return Buffer.from(await data.arrayBuffer());
+}
+
 // Firma una URL temporal de lectura (default 60s) para mostrar la media en el panel.
 export async function signedMediaUrl(
   path: string,

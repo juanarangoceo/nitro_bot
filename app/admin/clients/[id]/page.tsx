@@ -4,6 +4,7 @@ import { getPlatformAdminContext } from "@/lib/admin/context";
 import { setTenantActive, updateTenantCommercial } from "../../actions";
 import {
   PromptEditor,
+  BusinessInfoEditor,
   RotateShopify,
   RotateWa,
   ConfigureWa,
@@ -54,7 +55,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled"
     )
     .eq("id", id)
     .maybeSingle();
@@ -262,6 +263,10 @@ export default async function ClientDetailPage({
 
       <Card title="Prompt del asesor">
         <PromptEditor tenantId={t.id} initialPrompt={t.system_prompt ?? ""} />
+      </Card>
+
+      <Card title="Información de la empresa">
+        <BusinessInfoEditor tenantId={t.id} initialInfo={t.business_info ?? ""} />
       </Card>
 
       <Card title="Auditoría reciente">
