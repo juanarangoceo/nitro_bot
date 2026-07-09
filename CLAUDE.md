@@ -246,7 +246,54 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   - **Reset de contador** en /admin ("Reiniciar contador a 0", auditado) para
     entregar el cliente en cero tras las pruebas.
 
+- **Sesión 2026-07-09 (bis) — 7 ajustes del asesor (construidos y VERIFICADOS
+  e2e contra Gemini y Shopify dev; typecheck/build/verify 4/4; NO desplegados)**:
+  - **Descripciones + disponibilidad (migración #15)**: `match_products` filtra
+    `status='active'` (disponible = status de Shopify, NO stock — el cliente usa
+    "seguir vendiendo sin inventario"). `buscar_productos` devuelve `descripcion`
+    recortada (~350 chars) y `disponible`; se ELIMINÓ `ver_stock` (número crudo
+    engañoso) y se creó `ver_detalle_producto` (ficha completa de un producto).
+  - **`business_info` (migración #16)**: campo separado del prompt con info fija
+    de la empresa (envíos/garantías/devoluciones), card propia en /admin
+    (`updateBusinessInfoAdmin`, vacío = sin sección), inyectado como sección del
+    system prompt con regla de "responde con ESTO y no escales por esto". OJO:
+    el prompt NUNCA tuvo caché (se lee fresco por mensaje); el "responde con
+    info vieja" era el historial imitándose a sí mismo → regla de precedencia
+    nueva en `buildSystemPrompt`.
+  - **Orden Shopify completa** (`lib/shopify/orders.ts` + `lib/shopify/colombia.ts`):
+    la orden ahora asocia el **customer** (busca por teléfono con `read_customers`
+    o crea con `customerCreate`; `toAssociate {id}` — `toUpsert` NO sirve: exige
+    id/email). `shippingAddress` lleva `countryCode: CO` + `provinceCode` ISO
+    (en 2026-04 `country`/`province` string ya no están en la introspección).
+    Departamento: mapa ciudad→departamento (~60 ciudades) + arg opcional
+    `departamento` en `crear_orden`; ciudad desconocida → error
+    `FALTA_DEPARTAMENTO` que hace que la IA pregunte. `splitName` 2+2 con 4+
+    palabras. `customers.shopify_customer_id` por fin se persiste. **Verificado
+    con orden real #133910 en Shopify dev** (customer asociado + Antioquia/ANT;
+    filas locales de prueba ya borradas — cancelar la orden en Shopify admin).
+  - **Teléfono = mismo WhatsApp**: `telefono` opcional en `crear_orden`; si la IA
+    lo omite, el server usa `ctx.customerPhone` (el número real del canal, nunca
+    lo decide el modelo). Regla de cierre nueva en el prompt ("¿te contactamos a
+    este mismo WhatsApp…?").
+  - **Imágenes en ráfaga (fix del debounce)**: `collectTurnMedia` en el worker
+    adjunta inline la media de TODOS los mensajes del cliente posteriores a la
+    última respuesta del bot (cap 3, ≤5 MB c/u, `downloadWaMedia` desde Storage);
+    antes solo iba el mensaje actual y una foto seguida de texto llegaba como
+    "[imagen]" sin bytes. Verificado: Gemini identificó el producto de una foto
+    real y lo cotizó.
+  - **Escalamiento**: diagnóstico real (30d: 5 pide_humano, 4 fallo_tecnico por
+    `exhausted`, 1 cancelación — el problema eran los loops de tools agotando
+    5 rondas, casi todos el mismo día). Fixes: descripción de `escalar_a_humano`
+    endurecida ("ÚLTIMO recurso…") + `motivo` como enum; guard server-side
+    (`ctx.calledTools`): `fuera_de_catalogo` exige `buscar_productos` en el
+    turno; y en `runAssistant`, al agotar `MAX_TOOL_ROUNDS`, UNA llamada final
+    con `toolConfig mode NONE` para responder con lo recopilado antes de escalar.
+
 ### 🔜 Pendiente
+- **Desplegar los 7 ajustes** (migraciones #15/#16 ya aplicadas a la DB; falta
+  `vercel --prod` o push). Tras el deploy: llenar **"Información de la empresa"**
+  en /admin para Elegance (garantías/envíos reales), probar foto+texto por
+  WhatsApp real, y cancelar la orden de prueba **#133910** en Shopify dev.
 - **Vigilar el cron horario de recordatorios**: el deploy lo aceptó, pero
   confirmar al día siguiente que hay eventos `reminder` en event_log
   (/admin/health). Si el plan de Vercel lo limita a diario, disparar
@@ -327,7 +374,8 @@ lib/ai/tools.ts                     function calling (precio/total server-side)
 lib/ai/gemini.ts                    cliente gemini-3.5-flash + loop de tools
 lib/shopify/client.ts               GraphQL Admin API por tenant
 lib/shopify/sync.ts                 sync de catálogo (webhook + backfill)
-lib/shopify/orders.ts               crea orden COD (orderCreate, PENDING)
+lib/shopify/orders.ts               crea orden COD (orderCreate, PENDING, customer+province)
+lib/shopify/colombia.ts             ciudad→departamento + códigos ISO (provinceCode)
 scripts/migrate.mjs                 runner de migraciones (pg directo)
 scripts/seed-tenant.ts              alta de tenant con creds cifradas (tsx)
 scripts/seed-wa.ts                  carga creds WhatsApp del tenant (token cifrado)
