@@ -13,6 +13,7 @@ import { createAdminClient } from "../supabase/admin";
 import { getTenantByPhoneNumberId, type Tenant } from "../tenant";
 import { sendText, type WaCreds } from "../whatsapp/meta";
 import { logEvent } from "../ops/events";
+import { emptyUsage, accumulateUsage } from "./gemini";
 import { env } from "../env";
 
 const PHASE1_MIN_HOURS = 4;
@@ -101,6 +102,18 @@ async function generateReminderText(
     );
     const json = await res.json();
     if (!res.ok || json.error) throw new Error(json.error?.message ?? `HTTP ${res.status}`);
+    // Medición de tokens (best-effort, misma traza que el worker).
+    const usage = emptyUsage();
+    accumulateUsage(usage, json);
+    if (usage.calls) {
+      await logEvent({
+        kind: "gemini_usage",
+        severity: "info",
+        tenantId: tenant.id,
+        conversationId,
+        detail: { ...usage, source: "reminder" },
+      });
+    }
     const text = ((json.candidates?.[0]?.content?.parts ?? []) as { text?: string }[])
       .map((p) => p.text ?? "")
       .join("")

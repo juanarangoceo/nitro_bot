@@ -60,9 +60,51 @@ async function generate(
   return json;
 }
 
+// Consumo de tokens del turno (suma de TODAS las llamadas: cada ronda del loop
+// re-paga el input completo, así que promptTokens refleja lo realmente
+// facturado). Viene de usageMetadata de la API.
+export type GeminiUsage = {
+  calls: number;
+  promptTokens: number;
+  outputTokens: number;
+  thoughtsTokens: number; // thinking: se factura como salida
+  cachedTokens: number; // parte del input con descuento de caché implícito
+  audioTokens: number; // parte del input facturada a tarifa de audio
+};
+
+export function emptyUsage(): GeminiUsage {
+  return { calls: 0, promptTokens: 0, outputTokens: 0, thoughtsTokens: 0, cachedTokens: 0, audioTokens: 0 };
+}
+
+type UsageMetadata = {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  thoughtsTokenCount?: number;
+  cachedContentTokenCount?: number;
+  promptTokensDetails?: { modality?: string; tokenCount?: number }[];
+};
+
+// Acumula el usageMetadata de una respuesta sobre `acc`. Reusable por los
+// llamadores que hacen su propio fetch (recordatorios).
+export function accumulateUsage(acc: GeminiUsage, json: unknown): void {
+  const u = (json as { usageMetadata?: UsageMetadata })?.usageMetadata;
+  if (!u) return;
+  acc.calls += 1;
+  acc.promptTokens += u.promptTokenCount ?? 0;
+  acc.outputTokens += u.candidatesTokenCount ?? 0;
+  acc.thoughtsTokens += u.thoughtsTokenCount ?? 0;
+  acc.cachedTokens += u.cachedContentTokenCount ?? 0;
+  for (const d of u.promptTokensDetails ?? []) {
+    if (d.modality === "AUDIO") acc.audioTokens += d.tokenCount ?? 0;
+  }
+}
+
 export type AssistantResult = {
   text: string;
   toolTrace: { name: string; args: unknown; response: unknown }[];
+  // Tokens consumidos por el turno completo (todas las rondas). Opcional para
+  // no cambiar el contrato de llamadores existentes.
+  usage?: GeminiUsage;
   // true si el loop agotó MAX_TOOL_ROUNDS sin respuesta final: el asesor quedó
   // trabado (p. ej. una herramienta falla en bucle). El worker escala a humano
   // en lugar de dejar al cliente en un callejón sin salida. Opcional para no
@@ -99,9 +141,11 @@ export async function runAssistant(params: {
   };
   const working: Content[] = [...contents];
   const toolTrace: AssistantResult["toolTrace"] = [];
+  const usage = emptyUsage();
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const json = await generate(tenant.ai_model, systemPrompt, working);
+    accumulateUsage(usage, json);
     const parts = (json.candidates?.[0]?.content?.parts ?? []) as GeminiPart[];
     const calls = parts.filter((p) => p.functionCall);
 
@@ -110,7 +154,7 @@ export async function runAssistant(params: {
         .map((p) => (typeof p.text === "string" ? p.text : ""))
         .join("")
         .trim();
-      return { text, toolTrace };
+      return { text, toolTrace, usage };
     }
 
     // Reenviamos los parts del modelo SIN modificar (preserva thoughtSignature).
@@ -139,12 +183,13 @@ export async function runAssistant(params: {
   // turno con lo que ya recopiló. Solo si también esto falla queda `exhausted`.
   try {
     const json = await generate(tenant.ai_model, systemPrompt, working, { disableTools: true });
+    accumulateUsage(usage, json);
     const parts = (json.candidates?.[0]?.content?.parts ?? []) as GeminiPart[];
     const text = parts
       .map((p) => (typeof p.text === "string" ? p.text : ""))
       .join("")
       .trim();
-    if (text) return { text, toolTrace };
+    if (text) return { text, toolTrace, usage };
   } catch (e) {
     console.error("[gemini] intento final sin tools falló:", e);
   }
@@ -152,6 +197,7 @@ export async function runAssistant(params: {
   return {
     text: "Disculpa, no logré completar la respuesta. ¿Me lo repites?",
     toolTrace,
+    usage,
     exhausted: true,
   };
 }

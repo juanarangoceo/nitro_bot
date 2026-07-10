@@ -40,6 +40,7 @@ export default async function HealthPage({
   const page = Math.max(1, Number(sp.page ?? 1) || 1);
 
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const since14d = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
   let query = admin
     .from("event_log")
@@ -50,7 +51,7 @@ export default async function HealthPage({
   if (tenantFilter) query = query.eq("tenant_id", tenantFilter);
   if (kindFilter) query = query.eq("kind", kindFilter);
 
-  const [{ data: events }, errors24h, { data: tenants }] = await Promise.all([
+  const [{ data: events }, errors24h, { data: tenants }, { data: usageRows }] = await Promise.all([
     query,
     admin
       .from("event_log")
@@ -58,11 +59,70 @@ export default async function HealthPage({
       .eq("severity", "error")
       .gte("created_at", since24h),
     admin.from("tenants").select("id, name").order("name"),
+    admin
+      .from("event_log")
+      .select("conversation_id, detail, created_at")
+      .eq("kind", "gemini_usage")
+      .gte("created_at", since14d)
+      .order("created_at", { ascending: false })
+      .limit(5000),
   ]);
 
   const tenantName = new Map((tenants ?? []).map((t) => [t.id, t.name]));
   const rows = events ?? [];
   const errCount = errors24h.count ?? 0;
+
+  // —— Tokens Gemini (14 días): agregación por día + top conversaciones ——
+  type UsageDetail = {
+    calls?: number;
+    promptTokens?: number;
+    outputTokens?: number;
+    thoughtsTokens?: number;
+    cachedTokens?: number;
+    audioTokens?: number;
+    source?: string;
+  };
+  type DayAgg = {
+    turns: number;
+    calls: number;
+    prompt: number;
+    output: number;
+    thoughts: number;
+    audio: number;
+    cached: number;
+    bySource: Record<string, number>;
+  };
+  const byDay = new Map<string, DayAgg>();
+  const byConv = new Map<string, number>();
+  for (const r of usageRows ?? []) {
+    const d = (r.detail ?? {}) as UsageDetail;
+    const day = String(r.created_at).slice(0, 10);
+    const agg =
+      byDay.get(day) ??
+      ({ turns: 0, calls: 0, prompt: 0, output: 0, thoughts: 0, audio: 0, cached: 0, bySource: {} } as DayAgg);
+    agg.turns += 1;
+    agg.calls += d.calls ?? 0;
+    agg.prompt += d.promptTokens ?? 0;
+    agg.output += d.outputTokens ?? 0;
+    agg.thoughts += d.thoughtsTokens ?? 0;
+    agg.audio += d.audioTokens ?? 0;
+    agg.cached += d.cachedTokens ?? 0;
+    const src = d.source ?? "?";
+    agg.bySource[src] = (agg.bySource[src] ?? 0) + 1;
+    byDay.set(day, agg);
+    if (r.conversation_id) {
+      byConv.set(
+        r.conversation_id,
+        (byConv.get(r.conversation_id) ?? 0) +
+          (d.promptTokens ?? 0) +
+          (d.outputTokens ?? 0) +
+          (d.thoughtsTokens ?? 0)
+      );
+    }
+  }
+  const usageDays = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  const topConvs = [...byConv.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const fmt = (n: number) => n.toLocaleString("es-CO");
 
   const filterHref = (p: { tenant?: string; kind?: string; page?: number }) => {
     const params = new URLSearchParams();
@@ -97,6 +157,76 @@ export default async function HealthPage({
             : `🔴 ${errCount} error(es) en las últimas 24 horas.`}
         </p>
       </div>
+
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-neutral-900">Tokens Gemini (14 días)</h2>
+        <p className="mt-0.5 text-xs text-neutral-400">
+          Entrada = lo facturado sumando todas las rondas del turno · Thinking se factura como
+          salida · Audio es la parte del input a tarifa de audio · Caché tiene descuento.
+        </p>
+        {usageDays.length === 0 ? (
+          <p className="mt-3 text-sm text-neutral-400">
+            Aún no hay mediciones (se registran a partir de este despliegue).
+          </p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-neutral-400">
+                  <th className="px-2 py-1.5 font-medium">Día</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Turnos</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Llamadas</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Entrada</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Salida</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Thinking</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Audio</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Caché</th>
+                  <th className="px-2 py-1.5 font-medium">Origen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usageDays.map(([day, a]) => (
+                  <tr key={day} className="border-t border-neutral-100">
+                    <td className="whitespace-nowrap px-2 py-1.5 text-xs text-neutral-600">{day}</td>
+                    <td className="px-2 py-1.5 text-right text-neutral-700">{fmt(a.turns)}</td>
+                    <td className="px-2 py-1.5 text-right text-neutral-700">{fmt(a.calls)}</td>
+                    <td className="px-2 py-1.5 text-right font-medium text-neutral-900">{fmt(a.prompt)}</td>
+                    <td className="px-2 py-1.5 text-right text-neutral-700">{fmt(a.output)}</td>
+                    <td className="px-2 py-1.5 text-right text-neutral-500">{fmt(a.thoughts)}</td>
+                    <td className="px-2 py-1.5 text-right text-neutral-700">{fmt(a.audio)}</td>
+                    <td className="px-2 py-1.5 text-right text-neutral-500">{fmt(a.cached)}</td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-xs text-neutral-500">
+                      {Object.entries(a.bySource)
+                        .map(([s, n]) => `${s}: ${n}`)
+                        .join(" · ")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {topConvs.length > 0 && (
+          <div className="mt-4">
+            <p className="text-xs font-medium text-neutral-600">
+              Conversaciones que más tokens quemaron (14 días)
+            </p>
+            <ul className="mt-1 space-y-1">
+              {topConvs.map(([convId, tokens]) => (
+                <li key={convId} className="flex items-center justify-between text-xs">
+                  <Link
+                    href={`/admin/conversations/${convId}`}
+                    className="text-neutral-600 hover:underline"
+                  >
+                    {convId.slice(0, 8)}… →
+                  </Link>
+                  <span className="text-neutral-500">{fmt(tokens)} tokens</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
 
       <div className="flex flex-wrap items-center gap-3">
         <form method="get" action="/admin/health" className="flex flex-wrap items-center gap-2">

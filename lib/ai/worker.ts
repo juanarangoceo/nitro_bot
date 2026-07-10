@@ -408,7 +408,9 @@ export async function processInboundMessage(params: {
 
   const VOICE_TURN_INSTRUCTION =
     "NOTA DEL TURNO: el cliente envió una nota de voz y tu respuesta se convertirá en AUDIO con tu voz. " +
-    "Responde CONCISO (2-3 frases, máximo 80 palabras), en lenguaje hablado natural, manteniendo tu mismo tono y estilo. " +
+    "Responde en MÁXIMO 2 frases (~45 palabras), lenguaje hablado natural, directo al punto, con tu mismo tono. " +
+    "NO repitas saludos, ni información que ya diste en mensajes anteriores, ni lo que el cliente acaba de decir: di solo lo NUEVO. " +
+    "Si hay varios productos, menciona máximo 2. " +
     "Nada de markdown, emojis, listas, viñetas ni URLs: solo texto corrido que suene bien dicho en voz alta.";
 
   let result: AssistantResult;
@@ -433,6 +435,19 @@ export async function processInboundMessage(params: {
     });
     await escalateTechnicalFailure({ tenant, conversationId, wa, phone, detail: { message: (e as Error).message } });
     return;
+  }
+
+  // Consumo de tokens del turno (todas las rondas), para atribuir el gasto de
+  // Gemini desde /admin/health. Best-effort, antes del corte por exhausted
+  // para que los turnos agotados (los más caros) también queden medidos.
+  if (result.usage?.calls) {
+    await logEvent({
+      kind: "gemini_usage",
+      severity: "info",
+      tenantId: tenant.id,
+      conversationId,
+      detail: { ...result.usage, source: "whatsapp", voice: voiceTurn },
+    });
   }
 
   if (result.exhausted) {

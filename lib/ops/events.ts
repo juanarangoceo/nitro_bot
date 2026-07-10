@@ -14,6 +14,7 @@ export type EventKind =
   | "escalation_auto"
   | "notify_failure"
   | "tts_failure"
+  | "gemini_usage"
   | "oauth_failure"
   | "reminder"
   | "backup";

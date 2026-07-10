@@ -12,8 +12,9 @@ const MISTRAL_TTS_MODEL = "voxtral-mini-tts-2603";
 const TIMEOUT_MS = 15_000;
 
 // Voxtral recomienda entradas cortas (<300 palabras). Por encima del cap es
-// mejor mandar el texto completo por WhatsApp que un audio kilométrico.
-const MAX_INPUT_CHARS = 900;
+// mejor mandar el texto completo por WhatsApp que un audio kilométrico: las
+// notas de voz del bot deben ser breves (la instrucción de voz pide ≤2 frases).
+const MAX_INPUT_CHARS = 600;
 
 // El texto que llega viene pensado para chat: se limpia para que suene natural
 // hablado (los docs de Voxtral piden evitar markdown, emojis y URLs).

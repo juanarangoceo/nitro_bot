@@ -9,7 +9,7 @@
 
 import { requirePlatformAdmin } from "@/lib/admin/context";
 import { runAssistant, type Content } from "@/lib/ai/gemini";
-import { summarizeToolTrace } from "@/lib/ops/events";
+import { summarizeToolTrace, logEvent } from "@/lib/ops/events";
 import type { Tenant } from "@/lib/tenant";
 
 const TEST_PHONE = "+570000000000";
@@ -117,6 +117,18 @@ export async function sendTesterMessage(
       testMode: true,
       contents,
     });
+
+    // Los turnos del probador también queman tokens: quedan medidos con su
+    // propio origen para no confundirlos con tráfico real de WhatsApp.
+    if (result.usage?.calls) {
+      await logEvent({
+        kind: "gemini_usage",
+        severity: "info",
+        tenantId,
+        conversationId,
+        detail: { ...result.usage, source: "tester" },
+      });
+    }
 
     const reply = result.text?.trim() || null;
     if (reply) {

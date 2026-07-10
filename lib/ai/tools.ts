@@ -202,11 +202,15 @@ async function verDetalleProducto(ctx: ToolContext, args: Args) {
     .maybeSingle();
   if (!data) return { encontrado: false };
   const disponible = data.status === "active";
+  // Cap de la ficha: una descripción enorme infla el input de TODAS las rondas
+  // siguientes del turno (el payload de la tool viaja completo en cada llamada).
+  const full = data.description?.trim() || null;
+  const DETAIL_MAX = 1500;
   return {
     encontrado: true,
     titulo: data.title,
     precio: data.price,
-    descripcion: data.description?.trim() || null,
+    descripcion: full && full.length > DETAIL_MAX ? `${full.slice(0, DETAIL_MAX)}…` : full,
     disponible,
     ...(disponible ? {} : { nota: "Este producto no está disponible para la venta." }),
   };
