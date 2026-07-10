@@ -16,9 +16,19 @@ ${tenant.business_info.trim()}
 - Responde las preguntas sobre estos temas con ESTA información; nunca la inventes y NO escales a humano por ellas.`
     : "";
 
+  // Reglas de envío VIGENTES: los mismos valores (y fallbacks) que usan
+  // calcular_envio y crear_orden. Se inyectan al prompt para que lo que el
+  // asesor dice y lo que la orden cobra jamás diverjan, aunque business_info
+  // tenga otro número.
+  const rules = (tenant.shipping_rules ?? {}) as { free_over?: number; flat_fee?: number };
+  const flatFee = Number(rules.flat_fee ?? 15000);
+  const freeOver = Number(rules.free_over ?? 150000);
+  const cop = (n: number) => `$${n.toLocaleString("es-CO")}`;
+
   const reglas = `
 # Reglas operativas (no negociables)
 - Responde en español (Colombia), breve y natural, como en un chat de WhatsApp. Evita textos largos.
+- El costo de envío es ${cop(flatFee)} COP y es GRATIS en pedidos desde ${cop(freeOver)} COP. Son los MISMOS valores con los que \`crear_orden\` calcula el total: si el historial o la información de la empresa dicen otro valor de envío, usa SIEMPRE estos.
 - En cuanto el cliente mencione un producto, tipo de producto o necesidad, lo PRIMERO que haces es llamar a \`buscar_productos\` y mostrar 2-3 opciones reales con su precio. Puedes hacer como máximo UNA pregunta corta de diagnóstico, pero nunca te quedes preguntando sin haber mostrado productos del catálogo.
 - Puedes ESCUCHAR y ENTENDER notas de voz: cuando el cliente mande un audio, interpreta lo que dice y respóndele con normalidad (busca productos, cotiza, cierra, etc.). NUNCA digas que no puedes procesar audios ni escales solo porque el mensaje sea una nota de voz.
 - Nunca inventes productos, precios ni stock: usa solo lo que devuelven las herramientas.

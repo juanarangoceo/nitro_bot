@@ -168,6 +168,16 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
   if (fd.has("reminders_enabled_present")) {
     update.reminders_enabled = fd.get("reminders_enabled") === "on";
   }
+  // Reglas de envío: la fuente de verdad del costo que cobran crear_orden y
+  // calcular_envio (business_info es solo narrativo). Se guardan juntas como
+  // el objeto completo; ambos campos vienen prellenados en el formulario.
+  if (fd.has("shipping_flat_fee") && fd.has("shipping_free_over")) {
+    const flatFee = Number(String(fd.get("shipping_flat_fee") ?? "").trim());
+    const freeOver = Number(String(fd.get("shipping_free_over") ?? "").trim());
+    if (!Number.isFinite(flatFee) || flatFee < 0) return;
+    if (!Number.isFinite(freeOver) || freeOver < 0) return;
+    update.shipping_rules = { flat_fee: flatFee, free_over: freeOver };
+  }
   // Respuestas de voz (premium): toggle + voz propia del cliente en Mistral
   // (vacío = voz global de la plataforma).
   if (fd.has("voice_replies_enabled_present")) {

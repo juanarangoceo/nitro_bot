@@ -55,7 +55,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules"
     )
     .eq("id", id)
     .maybeSingle();
@@ -176,6 +176,31 @@ export default async function ClientDetailPage({
                 className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
               />
             </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-xs font-medium text-neutral-600">Costo de envío (COP)</span>
+                <input
+                  name="shipping_flat_fee"
+                  type="number"
+                  min={0}
+                  defaultValue={Number((t.shipping_rules as { flat_fee?: number })?.flat_fee ?? 15000)}
+                  className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-neutral-600">Envío GRATIS desde (COP)</span>
+                <input
+                  name="shipping_free_over"
+                  type="number"
+                  min={0}
+                  defaultValue={Number((t.shipping_rules as { free_over?: number })?.free_over ?? 150000)}
+                  className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                />
+              </label>
+            </div>
+            <p className="text-xs text-neutral-400">
+              Estos valores son los que cobra la ORDEN (crear_orden) y los que el asesor cita en el chat.
+            </p>
             <label className="block">
               <span className="text-xs font-medium text-neutral-600">
                 Correo de notificaciones (nueva conversación y tickets; vacío = sin avisos)
@@ -286,6 +311,10 @@ export default async function ClientDetailPage({
       </Card>
 
       <Card title="Información de la empresa">
+        <p className="mb-2 text-xs text-amber-600">
+          OJO: el costo de envío de las órdenes sale de los campos &quot;Costo de envío&quot; en
+          Datos del cliente — este texto es solo narrativo (garantías, tiempos, medios de pago).
+        </p>
         <BusinessInfoEditor tenantId={t.id} initialInfo={t.business_info ?? ""} />
       </Card>
 
