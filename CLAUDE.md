@@ -290,7 +290,46 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     turno; y en `runAssistant`, al agotar `MAX_TOOL_ROUNDS`, UNA llamada final
     con `toolConfig mode NONE` para responder con lo recopilado antes de escalar.
 
+- **Sesión 2026-07-10 — Respuestas de voz con Mistral (Voxtral TTS), premium
+  por tenant (DESPLEGADO en producción, commit efb08e0, health OK)**:
+  - **Arquitectura**: Gemini sigue siendo el cerebro (RAG/tools/órdenes intactos);
+    Mistral SOLO hace TTS del texto que Gemini genera. Audio entrante → respuesta
+    en nota de voz; texto → texto; cualquier fallo de TTS → fallback a texto (el
+    cliente jamás queda sin respuesta). La CLI de Mistral ("Vibe") NO se usa: es
+    un asistente de código; todo va por REST con fetch.
+  - **API**: `POST https://api.mistral.ai/v1/audio/speech` (Bearer), body
+    `{model: "voxtral-mini-tts-2603", input, voice_id, response_format: "opus"}`
+    → JSON `{audio_data: base64}`. Opus = OGG/Opus mono 24kHz, el formato exacto
+    de nota de voz de WhatsApp (verificado con `file`). Docs: <300 palabras, sin
+    markdown/emojis; 403 = moderación. ~$0.016 USD/1k chars.
+  - **Migración #17**: `tenants.voice_replies_enabled` (default OFF, premium) y
+    `tenants.voice_id` (voz propia del cliente; NULL = voz global
+    `MISTRAL_VOICE_ID`). Toggle + campo en /admin (card "Datos del cliente",
+    `updateTenantCommercial`, auditado). El voice_id NO es secreto.
+  - **`lib/ai/tts.ts`**: `synthesizeSpeech` best-effort (patrón email.ts): jamás
+    lanza; sanitiza markdown/emojis/URLs, cap 900 chars (más largo → null →
+    texto), timeout 15s, fallos a `event_log` `tts_failure`. Sin
+    `MISTRAL_API_KEY` o sin voz → no-op.
+  - **Worker**: `voiceTurn` = toggle on + mensaje ganador del debounce es audio +
+    TTS configurado. Inyecta instrucción de concisión hablada (2-3 frases, sin
+    markdown) vía param nuevo `extraSystem` de `runAssistant` (se anexa al system
+    prompt del tenant → misma narrativa). Envío: `uploadMedia`+`sendAudio` (ya
+    existían); persiste `msg_type: "audio"` con el TEXTO como `content` (el
+    historial de Gemini y el dashboard lo ven) + copia en Storage (`media_path`).
+  - **Verificado e2e real**: TTS con la voz "Elegance Support" (2.6s, 50KB OGG);
+    turno completo Gemini→catálogo real→respuesta hablada 55 palabras con precios
+    en letras→TTS OK; key inválida → null + traza `tts_failure`; typecheck/build/
+    verify 4/4. Env vars: `MISTRAL_API_KEY` + `MISTRAL_VOICE_ID` en `.env.local`
+    y Vercel Production (la voz global es "Elegance Support",
+    id `65e9e29e-c8bf-49a4-8842-f5987b162ee2`; listar voces:
+    `GET /v1/audio/voices`). OJO: la CLI de Vercel 54.9.1 no pudo agregar la var
+    a Preview (bug del prompt de git branch) — solo falta ahí.
+
 ### 🔜 Pendiente
+- **Probar respuestas de voz en vivo**: activar el checkbox premium para
+  Elegance dev en /admin y mandar una nota de voz real por WhatsApp (debe volver
+  nota de voz con la voz de Mistral; texto después debe volver a texto). Opcional:
+  botón "Probar voz" en /admin para validar un voice_id antes de guardarlo.
 - **Post-deploy de los 7 ajustes**: llenar **"Información de la empresa"** en
   /admin para Elegance (garantías/envíos reales), probar foto+texto por
   WhatsApp real, y cancelar la orden de prueba **#133910** en Shopify dev.
@@ -344,6 +383,7 @@ lib/whatsapp/meta.ts                Cloud API: enviar/leer/descargar media + par
 lib/ai/worker.ts                    procesa entrante (idempotencia/debounce/gate/IA)
 lib/ai/reminders.ts                 follow-ups (máx 2, ventana 24h, Gemini sin tools)
 lib/ai/escalation.ts                escalado único a humano (ticket + correo)
+lib/ai/tts.ts                       TTS Mistral Voxtral (respuestas de voz, best-effort)
 lib/notify/email.ts                 correos al equipo del cliente (Resend REST)
 app/login/page.tsx                  login del dashboard (Server Action)
 app/actions/auth.ts                 signIn/signOut (Server Actions)
