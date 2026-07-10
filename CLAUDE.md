@@ -325,11 +325,44 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     `GET /v1/audio/voices`). OJO: la CLI de Vercel 54.9.1 no pudo agregar la var
     a Preview (bug del prompt de git branch) — solo falta ahí.
 
+- **Sesión 2026-07-10 (bis) — fix envío de órdenes + medición de tokens
+  (DESPLEGADOS: commits bba079e y 77ae215)**:
+  - **Fix envío $15.000**: `tenants.shipping_rules` estaba VACÍO (nada lo
+    escribía en todo el repo) → `crear_orden`/`calcular_envio` caían al fallback
+    quemado (15000/150000) mientras el chat citaba `business_info` ($18.000 /
+    gratis desde $199.000). Fix: datos de Elegance corregidos
+    (`{flat_fee:18000, free_over:199000}`); campos "Costo de envío" y "Envío
+    GRATIS desde" en /admin (Datos del cliente, prellenados con el valor
+    efectivo); `buildSystemPrompt` inyecta los valores VIGENTES de
+    shipping_rules ("son los mismos de crear_orden; prevalecen") — chat y orden
+    ya no pueden divergir. Verificado: 100k→18000, 250k→gratis, orden real
+    pendiente de re-ensayo del usuario.
+  - **Medición de tokens Gemini** (el alza de gasto era invisible: se botaba
+    `usageMetadata`): `runAssistant` acumula por turno → `AssistantResult.usage`
+    (calls/prompt/output/thoughts/cached/audio); `event_log` kind `gemini_usage`
+    desde worker (source whatsapp + voice), probador (tester) y recordatorios
+    (reminder); sección "Tokens Gemini (14 días)" en /admin/health (por día +
+    origen + top 5 conversaciones). Medido: un turno con tools = ~13k tokens de
+    ENTRADA en 3 llamadas vs ~380 de salida (el input por ronda es el costo);
+    audio entrante facturado aparte (636 audioTokens en la prueba). Diagnóstico
+    del alza de 48h: 136 turnos de prueba + 8 loops agotados del 07-09 + audio.
+  - **Audios de voz más cortos** (reporte: largos y repetitivos):
+    `VOICE_TURN_INSTRUCTION` endurecida (máx 2 frases ~45 palabras, no repetir
+    saludos/lo ya dicho, máx 2 productos) y cap del TTS 900→600 chars (si sale
+    más largo va como TEXTO). `ver_detalle_producto` cap 1500 chars. Verificado:
+    respuesta de voz en 2 frases/46 palabras entendiendo la nota de voz.
+
 ### 🔜 Pendiente
 - **Probar respuestas de voz en vivo**: activar el checkbox premium para
   Elegance dev en /admin y mandar una nota de voz real por WhatsApp (debe volver
   nota de voz con la voz de Mistral; texto después debe volver a texto). Opcional:
   botón "Probar voz" en /admin para validar un voice_id antes de guardarlo.
+- **Leer "Tokens Gemini" en /admin/health tras unos días de uso real** para
+  atribuir el gasto (whatsapp vs tester vs voz) y decidir optimizaciones
+  (candidatas si duele: placeholder del audio en rondas 2+, bajar MAX_HISTORY).
+- **Re-ensayo del cierre de orden** por WhatsApp: la orden debe salir con envío
+  $18.000 (o gratis ≥$199.000). Cancelar en Shopify dev la orden del ensayo que
+  quedó con $15.000.
 - **Post-deploy de los 7 ajustes**: llenar **"Información de la empresa"** en
   /admin para Elegance (garantías/envíos reales), probar foto+texto por
   WhatsApp real, y cancelar la orden de prueba **#133910** en Shopify dev.
