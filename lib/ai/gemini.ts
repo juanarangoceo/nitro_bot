@@ -79,10 +79,15 @@ export async function runAssistant(params: {
   wa?: WaCreds;
   customerPhone?: string;
   testMode?: boolean;
+  // Instrucción adicional del turno (p. ej. "la respuesta será una nota de
+  // voz: sé conciso"). Se anexa al system prompt sin tocar el del tenant.
+  extraSystem?: string;
   contents: Content[];
 }): Promise<AssistantResult> {
-  const { tenant, conversationId, shopify, wa, customerPhone, testMode, contents } = params;
-  const systemPrompt = buildSystemPrompt(tenant);
+  const { tenant, conversationId, shopify, wa, customerPhone, testMode, extraSystem, contents } = params;
+  const systemPrompt = extraSystem
+    ? `${buildSystemPrompt(tenant)}\n\n${extraSystem}`
+    : buildSystemPrompt(tenant);
   const ctx: ToolContext = {
     tenant,
     conversationId,

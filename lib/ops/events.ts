@@ -13,6 +13,7 @@ export type EventKind =
   | "queue_failure"
   | "escalation_auto"
   | "notify_failure"
+  | "tts_failure"
   | "oauth_failure"
   | "reminder"
   | "backup";

@@ -55,7 +55,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id"
     )
     .eq("id", id)
     .maybeSingle();
@@ -196,6 +196,26 @@ export default async function ClientDetailPage({
                 defaultChecked={t.reminders_enabled !== false}
               />
               Recordatorios automáticos (follow-up a conversaciones a medias)
+            </label>
+            <label className="flex items-center gap-2 text-xs text-neutral-600">
+              <input type="hidden" name="voice_replies_enabled_present" value="1" />
+              <input
+                type="checkbox"
+                name="voice_replies_enabled"
+                defaultChecked={t.voice_replies_enabled === true}
+              />
+              Respuestas de voz (premium): nota de voz cuando el cliente manda audio
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">
+                Voz de Mistral del cliente (voice_id; vacío = voz de la plataforma)
+              </span>
+              <input
+                name="voice_id"
+                defaultValue={t.voice_id ?? ""}
+                placeholder="voice_..."
+                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+              />
             </label>
             <p className="text-xs text-neutral-400">
               Consumo actual: {Number(t.current_month_messages ?? 0).toLocaleString("es-CO")} /{" "}

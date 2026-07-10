@@ -19,6 +19,8 @@ import { logEvent, summarizeToolTrace } from "../ops/events";
 import { notifyNewConversation } from "../notify/email";
 import {
   sendText,
+  sendAudio,
+  uploadMedia,
   markAsRead,
   downloadMedia,
   type WaCreds,
@@ -26,6 +28,8 @@ import {
   type WaValue,
   type DownloadedMedia,
 } from "../whatsapp/meta";
+import { synthesizeSpeech } from "./tts";
+import { env } from "../env";
 import { uploadWaMedia, downloadWaMedia } from "../storage";
 import type { Tenant, TenantSecrets } from "../tenant";
 
@@ -392,6 +396,21 @@ export async function processInboundMessage(params: {
   // en un callejón sin salida ("¿me lo repites?" en bucle): se escala a humano
   // con ticket, se le avisa con un mensaje resolutivo y queda la traza en
   // event_log para diagnóstico.
+  // Respuesta de voz (premium): solo si el tenant la tiene activa, el mensaje
+  // ganador del debounce fue una nota de voz y hay TTS configurado. Si el
+  // cliente vuelve a escribir texto, este flag queda en false y todo sigue
+  // como siempre con texto.
+  const voiceTurn =
+    tenant.voice_replies_enabled === true &&
+    shaped.msgType === "audio" &&
+    !!env.MISTRAL_API_KEY &&
+    !!(tenant.voice_id ?? env.MISTRAL_VOICE_ID);
+
+  const VOICE_TURN_INSTRUCTION =
+    "NOTA DEL TURNO: el cliente envió una nota de voz y tu respuesta se convertirá en AUDIO con tu voz. " +
+    "Responde CONCISO (2-3 frases, máximo 80 palabras), en lenguaje hablado natural, manteniendo tu mismo tono y estilo. " +
+    "Nada de markdown, emojis, listas, viñetas ni URLs: solo texto corrido que suene bien dicho en voz alta.";
+
   let result: AssistantResult;
   try {
     result = await runAssistant({
@@ -400,6 +419,7 @@ export async function processInboundMessage(params: {
       shopify,
       wa,
       customerPhone: phone,
+      extraSystem: voiceTurn ? VOICE_TURN_INSTRUCTION : undefined,
       contents,
     });
   } catch (e) {
@@ -452,6 +472,61 @@ export async function processInboundMessage(params: {
   }
 
   // 7) Enviar por WhatsApp y persistir la respuesta del bot (idempotente por su wamid).
+  //    Turno de voz: se sintetiza el texto de Gemini con Mistral y se envía como
+  //    nota de voz. Cualquier fallo (TTS, upload o envío) cae a texto: el
+  //    cliente SIEMPRE recibe respuesta. El texto se guarda como content aunque
+  //    la respuesta sea audio: el historial de Gemini y el dashboard lo ven.
+  if (voiceTurn) {
+    const speech = await synthesizeSpeech({
+      text: reply,
+      voiceId: tenant.voice_id,
+      tenantId: tenant.id,
+      conversationId,
+    });
+    if (speech) {
+      try {
+        const waMediaId = await uploadMedia(wa, speech.bytes, speech.mimeType, "respuesta.ogg");
+        const outboundId = await sendAudio(wa, phone, { id: waMediaId });
+
+        // Persistir también en Storage para oírla luego en el panel (best-effort).
+        let mediaPath: string | null = null;
+        try {
+          mediaPath = await uploadWaMedia({
+            tenantId: tenant.id,
+            conversationId,
+            messageId: crypto.randomUUID(),
+            bytes: speech.bytes,
+            mimeType: speech.mimeType,
+          });
+        } catch (e) {
+          console.error("[worker] no se pudo persistir la nota de voz saliente:", e);
+        }
+
+        await supabase.from("messages").insert({
+          tenant_id: tenant.id,
+          conversation_id: conversationId,
+          wa_message_id: outboundId,
+          sender: "bot",
+          msg_type: "audio",
+          content: reply,
+          media_path: mediaPath,
+          media_mime: speech.mimeType,
+        });
+        return;
+      } catch (e) {
+        // uploadMedia/sendAudio fallaron: traza y fallback a texto.
+        console.error("[worker] envío de nota de voz falló; respondo texto:", e);
+        await logEvent({
+          kind: "tts_failure",
+          severity: "warning",
+          tenantId: tenant.id,
+          conversationId,
+          detail: { stage: "whatsapp_send", error: (e as Error).message },
+        });
+      }
+    }
+  }
+
   const outboundId = await sendText(wa, phone, reply);
   await supabase.from("messages").insert({
     tenant_id: tenant.id,

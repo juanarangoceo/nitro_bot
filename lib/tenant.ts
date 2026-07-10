@@ -23,6 +23,8 @@ export type Tenant = {
   current_month_messages: number;
   modules: Record<string, boolean>;
   is_active: boolean;
+  voice_replies_enabled: boolean;
+  voice_id: string | null;
 };
 
 export type TenantSecrets = {

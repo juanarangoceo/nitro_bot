@@ -168,6 +168,14 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
   if (fd.has("reminders_enabled_present")) {
     update.reminders_enabled = fd.get("reminders_enabled") === "on";
   }
+  // Respuestas de voz (premium): toggle + voz propia del cliente en Mistral
+  // (vacío = voz global de la plataforma).
+  if (fd.has("voice_replies_enabled_present")) {
+    update.voice_replies_enabled = fd.get("voice_replies_enabled") === "on";
+  }
+  if (fd.has("voice_id")) {
+    update.voice_id = String(fd.get("voice_id") ?? "").trim() || null;
+  }
   if (Object.keys(update).length === 0) return;
 
   await admin.from("tenants").update(update).eq("id", tenantId);

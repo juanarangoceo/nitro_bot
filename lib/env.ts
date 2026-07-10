@@ -44,6 +44,15 @@ export const env = {
   get APP_BASE_URL(): string | null {
     return process.env.APP_BASE_URL ?? process.env.WEBHOOK_BASE_URL ?? null;
   },
+  // Mistral (opcionales): TTS de las respuestas de voz. Sin la key, la feature
+  // queda no-op y el bot responde texto aunque el toggle del tenant esté activo.
+  get MISTRAL_API_KEY(): string | null {
+    return process.env.MISTRAL_API_KEY ?? null;
+  },
+  // Voz global de la plataforma; tenants.voice_id la sobreescribe por cliente.
+  get MISTRAL_VOICE_ID(): string | null {
+    return process.env.MISTRAL_VOICE_ID ?? null;
+  },
   // Resend (opcionales): sin ellas las notificaciones por correo son no-op.
   get RESEND_API_KEY(): string | null {
     return process.env.RESEND_API_KEY ?? null;
