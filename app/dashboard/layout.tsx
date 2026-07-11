@@ -18,6 +18,9 @@ export default async function DashboardLayout({
       : []),
     ...(mod.metrics !== false ? [{ href: "/dashboard/metrics", label: "Métricas" }] : []),
     ...(mod.crm !== false ? [{ href: "/dashboard/crm", label: "CRM" }] : []),
+    ...(mod.requests !== false
+      ? [{ href: "/dashboard/requests", label: "Solicitudes" }]
+      : []),
     { href: "/dashboard/account", label: "Mi cuenta" },
   ];
 

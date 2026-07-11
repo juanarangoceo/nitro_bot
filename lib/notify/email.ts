@@ -6,6 +6,7 @@
 import { env } from "../env";
 import { createAdminClient } from "../supabase/admin";
 import { logEvent } from "../ops/events";
+import { formatEta, STATUS_LABELS, type RequestStatus } from "../support/labels";
 
 const RESEND_URL = "https://api.resend.com/emails";
 
@@ -131,5 +132,79 @@ export async function notifyTicketEscalated(params: {
     });
   } catch (e) {
     console.error("[notify] ticket escalado:", e);
+  }
+}
+
+// Enlace al detalle de la solicitud en el dashboard (si conocemos la base URL).
+function requestLink(requestId: string): string {
+  const base = env.APP_BASE_URL;
+  if (!base) return "<p>Puedes ver el detalle en tu dashboard (sección <em>Solicitudes</em>).</p>";
+  return `<p><a href="${base}/dashboard/requests/${requestId}">Ver la solicitud en tu dashboard →</a></p>`;
+}
+
+// Correo cuando la plataforma cambia el estado de una solicitud del cliente.
+// Nunca lanza: se dispara desde las Server Actions de /admin (best-effort).
+export async function notifySupportRequestStatus(params: {
+  tenantId: string;
+  requestId: string;
+  subject: string;
+  status: RequestStatus;
+  etaDate?: string | null;
+  rejectionNote?: string | null;
+}): Promise<void> {
+  try {
+    const target = await notificationTarget(params.tenantId);
+    if (!target) return;
+
+    const statusLabel = STATUS_LABELS[params.status] ?? params.status;
+    const extra = [
+      params.etaDate
+        ? `<p><strong>Fecha estimada de implementación:</strong> ${esc(formatEta(params.etaDate))} (puede ajustarse).</p>`
+        : "",
+      params.status === "rechazada" && params.rejectionNote
+        ? `<p>Por ahora no vamos a avanzar con esta solicitud. El motivo:</p><blockquote>${esc(params.rejectionNote)}</blockquote><p>Si quieres conversarlo, déjanos un comentario en la solicitud.</p>`
+        : "",
+    ].join("");
+
+    await sendEmail({
+      to: target.email,
+      subject: `Tu solicitud "${params.subject}" cambió a ${statusLabel} — ${target.tenantName}`,
+      html: `
+        <p>Actualizamos el estado de tu solicitud en <strong>${esc(target.tenantName)}</strong>:</p>
+        <p style="font-size:16px"><strong>${esc(params.subject)}</strong> → <strong>${esc(statusLabel)}</strong></p>
+        ${extra}
+        ${requestLink(params.requestId)}
+      `,
+      tenantId: params.tenantId,
+    });
+  } catch (e) {
+    console.error("[notify] estado de solicitud:", e);
+  }
+}
+
+// Correo cuando la plataforma responde (comenta) una solicitud del cliente.
+export async function notifySupportRequestReply(params: {
+  tenantId: string;
+  requestId: string;
+  subject: string;
+  body: string;
+}): Promise<void> {
+  try {
+    const target = await notificationTarget(params.tenantId);
+    if (!target) return;
+
+    await sendEmail({
+      to: target.email,
+      subject: `Tienes una respuesta en tu solicitud "${params.subject}" — ${target.tenantName}`,
+      html: `
+        <p>Respondimos tu solicitud <strong>${esc(params.subject)}</strong> en <strong>${esc(target.tenantName)}</strong>:</p>
+        <blockquote>${esc(params.body)}</blockquote>
+        <p>Puedes contestar dejando un comentario en la solicitud.</p>
+        ${requestLink(params.requestId)}
+      `,
+      tenantId: params.tenantId,
+    });
+  } catch (e) {
+    console.error("[notify] respuesta de solicitud:", e);
   }
 }
