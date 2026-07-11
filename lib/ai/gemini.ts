@@ -22,7 +22,9 @@ import type { Tenant } from "../tenant";
 export type GeminiPart = Record<string, unknown>;
 export type Content = { role: "user" | "model"; parts: GeminiPart[] };
 
-const THINKING_LEVEL = "low";
+// Nivel de thinking único para TODAS las llamadas a Gemini del proyecto
+// (asesor y recordatorios). "low" es el mínimo en 3.x: no se puede apagar.
+export const THINKING_LEVEL = "low";
 const MAX_TOOL_ROUNDS = 5;
 
 function endpoint(model: string): string {
