@@ -352,7 +352,48 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     más largo va como TEXTO). `ver_detalle_producto` cap 1500 chars. Verificado:
     respuesta de voz en 2 frases/46 palabras entendiendo la nota de voz.
 
+- **Sesión 2026-07-11 — Módulo «Solicitudes» (soporte asíncrono cliente ↔
+  plataforma; MERGEADO a main, commit 86ad7d4)**: el tenant registra
+  solicitudes (ajuste_asesor/reporte_error/sugerencia/otro) en
+  `/dashboard/requests` y Juan las gestiona en `/admin/requests`. De cara al
+  cliente se llama «Solicitudes», NUNCA «Tickets» (ya usado por las
+  conversaciones escaladas del bot). Deliberadamente asíncrono, NO chat.
+  - **Migración #18**: `support_requests` (status: nueva/en_revision/aprobada/
+    en_proceso/resuelta/rechazada/cerrada_por_cliente + `eta_date` estimada +
+    `rejection_note`) y `support_request_comments` (hilo). **RLS con verbos
+    separados + grants POR COLUMNA**: el cliente solo inserta
+    (tenant_id/created_by/category/subject/description), comenta como
+    `'client'` firmando con su uid (policy lo fuerza) y cierra las propias
+    (`grant update (status)` + policy `with check (status='cerrada_por_cliente')`).
+    `status`/`eta_date`/`rejection_note` SOLO service_role — bloqueado a nivel
+    DB, no solo UI. OJO: `0002_grants.sql` da ALL a authenticated en tablas
+    nuevas (default privileges) → toda tabla con escritura restringida necesita
+    REVOKE explícito.
+  - **Dashboard**: nav «Solicitudes» (`mod.requests !== false`, opt-out como el
+    resto), lista con badges, form de creación, detalle con hilo + «Ya no la
+    necesito». El form NO menciona el editor del asesor (el cliente ya no lo
+    tiene; se movió a /admin en v2).
+  - **/admin**: bandeja unificada (nuevas primero, filtros estado/categoría/
+    tenant), **badge ámbar con conteo de nuevas en la sidebar** (count en el
+    layout server → prop a AdminSidebar), detalle con gestión (estado + eta +
+    responder; rechazar EXIGE motivo). Todo con `requirePlatformAdmin()` +
+    `logAudit` (`support_request_status`/`support_request_reply`).
+  - **Correos (Resend)**: `notifySupportRequestStatus`/`notifySupportRequestReply`
+    en `lib/notify/email.ts` (mismo patrón best-effort). Sin correo cuando el
+    cambio es `cerrada_por_cliente`. Requiere `tenants.notification_email`.
+  - **Observabilidad**: `event_log` kind `support_request` (info) al crear;
+    `/admin/health` ahora al filtrar por un kind concreto muestra también sus
+    eventos info (sin filtro sigue mostrando solo warning/error).
+  - **Verificado**: typecheck/build/verify 4/4 + **15 checks RLS/grants** con
+    usuario y tenant desechables (fuga entre tenants, columnas prohibidas,
+    suplantación de rol/uid en comentarios, update/delete bloqueados).
+    Vocabulario compartido en `lib/support/labels.ts`.
+
 ### 🔜 Pendiente
+- **Probar «Solicitudes» e2e en producción**: crear solicitud como usuario de
+  Elegance dev → badge en /admin → aprobar con fecha → correo → responder →
+  rechazar (exige motivo) → cierre propio. El correo requiere
+  `tenants.notification_email` configurado en /admin.
 - **Probar respuestas de voz en vivo**: activar el checkbox premium para
   Elegance dev en /admin y mandar una nota de voz real por WhatsApp (debe volver
   nota de voz con la voz de Mistral; texto después debe volver a texto). Opcional:
@@ -427,6 +468,9 @@ app/dashboard/crm/(page|export)     CRM + exportación CSV (RLS)
 app/dashboard/conversations/*       conversaciones en vivo (solo lectura, Realtime)
 app/dashboard/media/[id]/route.ts   sirve media del bucket privado (firma URL, RLS)
 app/dashboard/tickets/*             tickets en vivo (responder/resolver + enviar foto/audio)
+app/dashboard/requests/*            «Solicitudes» del cliente (crear/comentar/cerrar, RLS)
+app/admin/requests/*                bandeja de Solicitudes (estado/eta/responder, audita)
+lib/support/labels.ts               vocabulario compartido de Solicitudes (estados/categorías/badges)
 app/admin/*                         Panel de Plataforma (super-admin): clientes,
                                     alta con un botón, detalle, resumen, actions
 lib/admin/context.ts                gate super-admin (service_role, NO RLS) + audit_log
