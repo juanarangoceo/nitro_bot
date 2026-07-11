@@ -389,6 +389,42 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     suplantación de rol/uid en comentarios, update/delete bloqueados).
     Vocabulario compartido en `lib/support/labels.ts`.
 
+- **Sesión 2026-07-11 (bis) — Spec 10: tokens Gemini (DESPLEGADO, commit
+  2befe98, health OK). Primer día de tráfico REAL de Elegance**: 75
+  conversaciones nuevas, 194 turnos WhatsApp, 2,1M tokens de entrada, 2 órdenes
+  reales, 0 errores en event_log.
+  - **Fix del doble pitch en fotos**: `enviar_imagen_producto` perdió el
+    parámetro `mensaje` — el modelo escribía el pitch completo como caption y
+    lo repetía en el texto final (2 burbujas casi idénticas + salida doble).
+    La foto sale SOLA; el texto del turno es el único pitch; `content` del
+    mensaje = `[foto] título` (el caption-pitch tampoco contamina más el
+    historial). Regla del prompt alineada.
+  - **`MAX_HISTORY` 24→20, decidido con datos**: las 2 órdenes reales del día
+    midieron 17 y 55 mensajes antes del cierre; la de 55 cerró bien porque el
+    modelo SIEMPRE re-llama `buscar_productos` en el turno del `crear_orden`
+    (el historial reconstruido entre turnos NO trae las rondas de tools
+    previas) — el `producto_id` de los items nunca depende de la ventana.
+    Distribución: p50=4 msgs, p90=19. 16 quedaba al borde del cierre real de
+    17; se eligió 20.
+  - **Hallazgos Fase 0 de la spec** (importante para futuras "optimizaciones"):
+    el logging de usage (Fase 1) y `thinkingLevel low` (Fase 3, mínimo en 3.x)
+    YA existían; reordenar el prompt para caché (Fase 2) NO aplica — el system
+    prompt ya es 100% estático por tenant y `toolDeclarations` determinístico.
+    El hit-rate bajo (~18%) es estructural: **el mínimo de caché implícito de
+    `gemini-3.5-flash` es 4.096 tokens** y el prefijo estático mide ~3k (las
+    rondas 1 de conversaciones cortas no cachean), + ventana deslizante +
+    historial sin rondas de tools. Dentro del turno el caché sí pega (49%
+    observado en turnos largos). `THINKING_LEVEL` ahora se exporta de
+    `gemini.ts` (reminders lo reutiliza).
+  - **Batería 5/5 contra Gemini real (testMode)**: saludo / búsqueda+foto sin
+    duplicar / objeción de precio / cierre con 2 productos y datos en desorden
+    (orden simulada $153.000: envío $18.000, Antioquia deducida de Medellín,
+    teléfono del canal) / escalamiento.
+  - **Hallazgo operativo pendiente**: 6 turnos del día (~3%) con respuesta
+    VACÍA de Gemini (output 0) → bot mudo; uno dejó a un cliente sin responder.
+    Solo se loguea con `console.error` en Vercel — NO llega a event_log ni a
+    /admin/health.
+
 ### 🔜 Pendiente
 - **Probar «Solicitudes» e2e en producción**: crear solicitud como usuario de
   Elegance dev → badge en /admin → aprobar con fecha → correo → responder →
@@ -398,9 +434,14 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   Elegance dev en /admin y mandar una nota de voz real por WhatsApp (debe volver
   nota de voz con la voz de Mistral; texto después debe volver a texto). Opcional:
   botón "Probar voz" en /admin para validar un voice_id antes de guardarlo.
+- **Loggear la respuesta vacía de Gemini a event_log** (worker `runAssistant
+  sin texto`, hoy solo `console.error`): 6 casos el 2026-07-11, uno dejó a un
+  cliente colgado. Evento warning con conversation_id para verlo en
+  /admin/health.
 - **Leer "Tokens Gemini" en /admin/health tras unos días de uso real** para
-  atribuir el gasto (whatsapp vs tester vs voz) y decidir optimizaciones
-  (candidatas si duele: placeholder del audio en rondas 2+, bajar MAX_HISTORY).
+  medir el efecto del deploy 2befe98 (prompt/turno debe bajar en conversaciones
+  largas) y decidir si duele: placeholder de media en rondas 2+ (única
+  candidata restante; MAX_HISTORY ya se bajó a 20).
 - **Re-ensayo del cierre de orden** por WhatsApp: la orden debe salir con envío
   $18.000 (o gratis ≥$199.000). Cancelar en Shopify dev la orden del ensayo que
   quedó con $15.000.
