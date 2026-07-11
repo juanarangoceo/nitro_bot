@@ -34,7 +34,10 @@ import { uploadWaMedia, downloadWaMedia } from "../storage";
 import type { Tenant, TenantSecrets } from "../tenant";
 
 const DEBOUNCE_MS = 8_000;
-const MAX_HISTORY = 24;
+// Ventana de historial a Gemini. 20 cubre el p90 de conversaciones reales (19
+// mensajes) y el cierre de venta típico; el producto_id de crear_orden no
+// depende de la ventana (el modelo re-busca en el mismo turno del cierre).
+const MAX_HISTORY = 20;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

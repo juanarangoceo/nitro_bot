@@ -128,15 +128,11 @@ export const toolDeclarations = [
   {
     name: "enviar_imagen_producto",
     description:
-      "Envía al cliente fotos de un producto del catálogo por WhatsApp. Úsala cuando recomiendes un producto y convenga que el cliente lo vea. Pasa el shopify_id (campo 'id' que devuelve buscar_productos).",
+      "Envía al cliente fotos de un producto del catálogo por WhatsApp. La foto se envía SOLA, sin texto: tu respuesta de texto normal es la que la acompaña, así que no repitas en ella lo que la imagen ya muestra. Pasa el shopify_id (campo 'id' que devuelve buscar_productos).",
     parameters: {
       type: "object",
       properties: {
         producto_id: { type: "string", description: "shopify_id del producto." },
-        mensaje: {
-          type: "string",
-          description: "Texto corto opcional que acompaña la foto (caption).",
-        },
         cantidad: {
           type: "number",
           description:
@@ -316,9 +312,10 @@ async function crearOrden(ctx: ToolContext, args: Args) {
 // `cantidad` (1-4, default 1) permite mandar la galería cuando el cliente pide
 // más fotos. Persiste un mensaje saliente del bot (msg_type image) por cada
 // foto. En el sandbox del editor (sin wa/customerPhone) hace no-op y lo reporta.
+// La foto va SIN caption: el texto de venta es la respuesta normal del turno.
+// Un caption escrito por el modelo duplicaba el pitch (caption + texto final).
 async function enviarImagenProducto(ctx: ToolContext, args: Args) {
   const productoId = String(args.producto_id ?? "");
-  const caption = args.mensaje ? String(args.mensaje) : undefined;
   const cantidad = Math.min(4, Math.max(1, Math.trunc(Number(args.cantidad)) || 1));
   const supabase = createAdminClient();
   const { data: prod } = await supabase
@@ -349,18 +346,15 @@ async function enviarImagenProducto(ctx: ToolContext, args: Args) {
 
   let sent = 0;
   try {
-    for (const [i, url] of urls.entries()) {
-      const waId = await sendImage(ctx.wa, ctx.customerPhone, {
-        link: url,
-        caption: i === 0 ? caption : undefined,
-      });
+    for (const url of urls) {
+      const waId = await sendImage(ctx.wa, ctx.customerPhone, { link: url });
       await supabase.from("messages").insert({
         tenant_id: ctx.tenant.id,
         conversation_id: ctx.conversationId,
         wa_message_id: waId,
         sender: "bot",
         msg_type: "image",
-        content: i === 0 ? caption ?? `[foto] ${prod.title ?? ""}`.trim() : `[foto] ${prod.title ?? ""}`.trim(),
+        content: `[foto] ${prod.title ?? ""}`.trim(),
         media_url: url,
       });
       sent++;

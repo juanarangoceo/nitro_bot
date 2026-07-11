@@ -13,7 +13,7 @@ import { createAdminClient } from "../supabase/admin";
 import { getTenantByPhoneNumberId, type Tenant } from "../tenant";
 import { sendText, type WaCreds } from "../whatsapp/meta";
 import { logEvent } from "../ops/events";
-import { emptyUsage, accumulateUsage } from "./gemini";
+import { emptyUsage, accumulateUsage, THINKING_LEVEL } from "./gemini";
 import { env } from "../env";
 
 const PHASE1_MIN_HOURS = 4;
@@ -96,7 +96,7 @@ async function generateReminderText(
             ],
           },
           contents,
-          generationConfig: { thinkingConfig: { thinkingLevel: "low" } },
+          generationConfig: { thinkingConfig: { thinkingLevel: THINKING_LEVEL } },
         }),
       }
     );
