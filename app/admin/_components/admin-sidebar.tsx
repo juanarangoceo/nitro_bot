@@ -7,12 +7,19 @@ import { signOut } from "@/app/actions/auth";
 const ITEMS = [
   { href: "/admin", label: "Clientes" },
   { href: "/admin/new", label: "Alta de cliente" },
+  { href: "/admin/requests", label: "Solicitudes" },
   { href: "/admin/summary", label: "Resumen plataforma" },
   { href: "/admin/health", label: "Salud" },
   { href: "/admin/tester", label: "Probador" },
 ];
 
-export function AdminSidebar({ email }: { email: string }) {
+export function AdminSidebar({
+  email,
+  newRequests = 0,
+}: {
+  email: string;
+  newRequests?: number;
+}) {
   const pathname = usePathname();
 
   return (
@@ -30,11 +37,16 @@ export function AdminSidebar({ email }: { email: string }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`block rounded-lg px-3 py-2 text-sm ${
+              className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
                 active ? "bg-white text-neutral-900" : "text-neutral-300 hover:bg-neutral-800"
               }`}
             >
               {item.label}
+              {item.href === "/admin/requests" && newRequests > 0 && (
+                <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-semibold text-neutral-900">
+                  {newRequests}
+                </span>
+              )}
             </Link>
           );
         })}

@@ -17,7 +17,8 @@ export type EventKind =
   | "gemini_usage"
   | "oauth_failure"
   | "reminder"
-  | "backup";
+  | "backup"
+  | "support_request";
 
 export type EventSeverity = "info" | "warning" | "error";
 

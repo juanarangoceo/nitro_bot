@@ -14,6 +14,7 @@ const KINDS = [
   "escalation_auto",
   "notify_failure",
   "backup",
+  "support_request",
 ] as const;
 
 function summarizeDetail(detail: unknown): string {
@@ -45,11 +46,14 @@ export default async function HealthPage({
   let query = admin
     .from("event_log")
     .select("id, tenant_id, conversation_id, kind, severity, detail, created_at")
-    .in("severity", ["warning", "error"])
     .order("created_at", { ascending: false })
     .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
   if (tenantFilter) query = query.eq("tenant_id", tenantFilter);
+  // Sin filtro de tipo, la vista muestra solo problemas (warning/error). Al
+  // filtrar por un tipo concreto se ven también sus eventos informativos
+  // (p. ej. support_request o reminder).
   if (kindFilter) query = query.eq("kind", kindFilter);
+  else query = query.in("severity", ["warning", "error"]);
 
   const [{ data: events }, errors24h, { data: tenants }, { data: usageRows }] = await Promise.all([
     query,
@@ -304,7 +308,9 @@ export default async function HealthPage({
                       className={`rounded-full px-2 py-0.5 text-[11px] ${
                         e.severity === "error"
                           ? "bg-red-100 text-red-700"
-                          : "bg-amber-100 text-amber-700"
+                          : e.severity === "warning"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-neutral-100 text-neutral-600"
                       }`}
                     >
                       {e.kind}
