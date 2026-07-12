@@ -37,8 +37,12 @@ del asesor.
 - **Multimodal completo** desde el MVP: transcripción de notas de voz + imágenes.
 - **Debounce ~6-10s** de mensajes entrantes para coalescer ráfagas (Fase 3).
 - Índice vectorial **HNSW** (no ivfflat). `tenant_id` vía helper `current_tenant_id()` en RLS.
-- **Modelo de chat: `gemini-3.5-flash`** con `thinkingLevel: "low"`. Flash-Lite
-  resultó inconsistente disparando herramientas (~3/5); 3.5 Flash es 5/5 fiable.
+- **Modelo de chat: `gemini-3.5-flash`** con `thinkingLevel: "low"` en el asesor.
+  Flash-Lite resultó inconsistente disparando herramientas (~3/5); 3.5 Flash es
+  5/5 fiable. OJO: `thinkingBudget: 0` SÍ es válido en 3.5-flash vía v1beta
+  (verificado 2026-07-12; la creencia "en 3.x no se puede apagar" era falsa) —
+  se usa en los reminders (sin tools, no necesitan razonar); el asesor con
+  tools conserva `low`.
   Gemini 3.x: NO enviar `temperature`; `functionResponse` debe incluir el `id`
   del `functionCall` (name y conteo coincidentes) o el modelo responde vacío.
   **El `contents` debe terminar en turno del cliente (`role: "user"`)**: si la
@@ -425,7 +429,47 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     Solo se loguea con `console.error` en Vercel — NO llega a event_log ni a
     /admin/health.
 
+- **Sesión 2026-07-12 — Audios del dashboard + buscador de clientes + Spec 11
+  (DESPLEGADO en producción, merge efca5ed, health OK, smoke post-deploy verde)**:
+  - **Fix audios en Conversaciones/Tickets (reporte del cliente)**, dos causas:
+    (1) el worker inserta el mensaje de audio SIN `media_path` y lo completa con
+    un UPDATE tras subirlo a Storage, pero las vistas solo escuchaban INSERT de
+    Realtime → en vivo la nota de voz quedaba como texto `[nota de voz]` sin
+    reproductor hasta recargar. Ambos clients escuchan ahora también UPDATE
+    (merge por id; verificado que el evento llega a `authenticated` bajo RLS).
+    (2) WhatsApp usa OGG/Opus, que Safari (Mac/iPhone) no reproduce: nuevo
+    fallback `?format=wav` en `/dashboard/media/[id]` que transcodifica
+    server-side (`lib/audio/ogg-to-wav.ts`, paquete `ogg-opus-decoder` WASM
+    puro — requiere `serverExternalPackages` en next.config.ts porque el
+    bundler no resuelve sus workers). `MessageBody` compartido
+    (`app/dashboard/message-body.tsx`) detecta soporte con `canPlayType` y
+    elige la URL. Sin flag, el redirect firmado queda intacto. Bonus:
+    `extFor` recorta parámetros del mime (`audio/ogg; codecs=opus` → `.ogg`,
+    antes `.bin`).
+  - **Buscador de clientes en `/dashboard/conversations`** (pedido del
+    cliente): server-side vía `searchParams.q` (patrón de /admin/requests),
+    busca por teléfono parcial y por nombre en `customers`, y la lista/detalle
+    muestran el **nombre del CRM** junto al teléfono. RLS intacto (cliente
+    authenticated). Verificado e2e con usuario desechable (patrón del verify)
+    contra dev y producción.
+  - **Spec 11 — `thinkingBudget: 0` en reminders**: medido en producción
+    (2026-07-12) cada reminder quemaba ~560 tokens de thinking (facturado como
+    salida) para ~45 de salida real (11x); los 125 reminders del día generaron
+    más thinking (70K) que las 471 llamadas de WhatsApp juntas (38K). La
+    llamada de reminders es propia (fetch en `lib/ai/reminders.ts`, no comparte
+    config con el asesor): cambio de 13 líneas. Verificado 3/3 contra Gemini
+    real: `thoughts=0`, STOP, calidad/tono igual. Si la API rechazara el
+    parámetro, el catch existente cae al texto fijo de fallback.
+
 ### 🔜 Pendiente
+- **Control post-deploy spec 11 (24h)**: en `/admin/health` → "Tokens Gemini"
+  (o query a `event_log` kind `gemini_usage` agrupada por `detail->>'source'`),
+  `reminder` debe registrar `thoughtsTokens ≈ 0` con mensajes de calidad
+  normal; `whatsapp` sin cambios (~1,8-2,0 thinking/salida).
+- **Confirmar con el cliente Elegance que ya escucha los audios** en
+  `/dashboard/conversations` desde su navegador real (si era Safari/iPhone
+  aplica el fallback WAV; si era el bug de Realtime, el reproductor ya aparece
+  en vivo).
 - **Probar «Solicitudes» e2e en producción**: crear solicitud como usuario de
   Elegance dev → badge en /admin → aprobar con fecha → correo → responder →
   rechazar (exige motivo) → cierre propio. El correo requiere
@@ -499,6 +543,8 @@ lib/ai/worker.ts                    procesa entrante (idempotencia/debounce/gate
 lib/ai/reminders.ts                 follow-ups (máx 2, ventana 24h, Gemini sin tools)
 lib/ai/escalation.ts                escalado único a humano (ticket + correo)
 lib/ai/tts.ts                       TTS Mistral Voxtral (respuestas de voz, best-effort)
+lib/audio/ogg-to-wav.ts             transcode OGG/Opus→WAV (audios en Safari, WASM)
+app/dashboard/message-body.tsx      cuerpo de mensaje compartido (texto/imagen/audio + canPlayType)
 lib/notify/email.ts                 correos al equipo del cliente (Resend REST)
 app/login/page.tsx                  login del dashboard (Server Action)
 app/actions/auth.ts                 signIn/signOut (Server Actions)
@@ -506,7 +552,7 @@ app/dashboard/layout.tsx            layout protegido + nav por módulos
 app/dashboard/page.tsx              Inicio: consumo del mes (alerta 80%)
 app/dashboard/metrics/page.tsx      métricas (conversaciones, órdenes, ventas)
 app/dashboard/crm/(page|export)     CRM + exportación CSV (RLS)
-app/dashboard/conversations/*       conversaciones en vivo (solo lectura, Realtime)
+app/dashboard/conversations/*       conversaciones en vivo (solo lectura, Realtime, buscador ?q=)
 app/dashboard/media/[id]/route.ts   sirve media del bucket privado (firma URL, RLS)
 app/dashboard/tickets/*             tickets en vivo (responder/resolver + enviar foto/audio)
 app/dashboard/requests/*            «Solicitudes» del cliente (crear/comentar/cerrar, RLS)
