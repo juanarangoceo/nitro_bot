@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
+import { MessageBody } from "../message-body";
 import { closeConversation, deleteConversation } from "./actions";
 
 export type ConversationRow = {
   id: string;
   customer_phone: string;
+  customer_name: string | null;
   status: string;
   last_customer_message_at: string | null;
   created_at: string;
@@ -33,29 +35,6 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
 function StatusBadge({ status }: { status: string }) {
   const s = STATUS_LABEL[status] ?? { text: status, cls: "bg-neutral-100 text-neutral-600" };
   return <span className={`rounded-full px-2 py-0.5 text-[10px] ${s.cls}`}>{s.text}</span>;
-}
-
-// Renderiza el contenido del mensaje según su tipo. La media se sirve por el
-// route handler /dashboard/media/[id] (firma URLs del bucket privado).
-function MessageBody({ m }: { m: Message }) {
-  const hasMedia = m.media_path || m.media_url;
-  if (m.msg_type === "image" && hasMedia) {
-    return (
-      <div className="space-y-1">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={`/dashboard/media/${m.id}`}
-          alt={m.content ?? "imagen"}
-          className="max-h-60 rounded-lg"
-        />
-        {m.content && m.content !== "[imagen]" && <p>{m.content}</p>}
-      </div>
-    );
-  }
-  if (m.msg_type === "audio" && hasMedia) {
-    return <audio controls src={`/dashboard/media/${m.id}`} className="max-w-full" />;
-  }
-  return <p className="whitespace-pre-wrap">{m.content}</p>;
 }
 
 export function ConversationsClient({
@@ -132,6 +111,24 @@ export function ConversationsClient({
           setMessages((prev) => [...prev, payload.new as Message]);
         }
       )
+      // El worker inserta el mensaje de audio/imagen SIN media_path y lo
+      // completa con un UPDATE al subirlo a Storage: sin esto, el reproductor
+      // no aparece en vivo hasta recargar.
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${selected.id}`,
+        },
+        (payload) => {
+          const updated = payload.new as Message;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
+          );
+        }
+      )
       .subscribe();
 
     return () => {
@@ -160,9 +157,14 @@ export function ConversationsClient({
             }`}
           >
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-medium text-neutral-900">{c.customer_phone}</p>
+              <p className="truncate text-sm font-medium text-neutral-900">
+                {c.customer_name ?? c.customer_phone}
+              </p>
               <StatusBadge status={c.status} />
             </div>
+            {c.customer_name && (
+              <p className="text-xs text-neutral-500">{c.customer_phone}</p>
+            )}
             <p className="mt-1 text-[11px] text-neutral-400">
               {c.last_customer_message_at
                 ? new Date(c.last_customer_message_at).toLocaleString("es-CO")
@@ -176,7 +178,11 @@ export function ConversationsClient({
       {selected ? (
         <div className="flex h-[calc(100dvh-11rem)] min-h-[480px] flex-col rounded-2xl border border-neutral-200 bg-white">
           <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
-            <p className="text-sm font-medium text-neutral-900">{selected.customer_phone}</p>
+            <p className="text-sm font-medium text-neutral-900">
+              {selected.customer_name
+                ? `${selected.customer_name} · ${selected.customer_phone}`
+                : selected.customer_phone}
+            </p>
             <div className="flex items-center gap-2">
               <StatusBadge status={selected.status} />
               {selected.status !== "closed" && (

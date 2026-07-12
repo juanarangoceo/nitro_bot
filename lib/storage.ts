@@ -8,6 +8,8 @@ import { createAdminClient } from "./supabase/admin";
 const BUCKET = "wa-media";
 
 // Extensión a partir del mime (suficiente para audio/imagen de WhatsApp).
+// Meta manda parámetros (p. ej. `audio/ogg; codecs=opus`): se recortan para
+// que el lookup no caiga a `.bin`.
 function extFor(mime: string): string {
   const map: Record<string, string> = {
     "image/jpeg": "jpg",
@@ -21,7 +23,7 @@ function extFor(mime: string): string {
     "audio/amr": "amr",
     "audio/aac": "aac",
   };
-  return map[mime] ?? "bin";
+  return map[mime.split(";")[0].trim().toLowerCase()] ?? "bin";
 }
 
 // Sube bytes y devuelve la key del objeto (media_path). Best-effort: el llamador

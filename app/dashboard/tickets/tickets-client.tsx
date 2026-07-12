@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
+import { MessageBody } from "../message-body";
 import { replyToTicket, resolveTicket, sendMediaFromAgent, type ReplyState } from "./actions";
 
 export type TicketRow = {
@@ -25,24 +26,6 @@ type Message = {
 };
 
 const replyInit: ReplyState = { ok: false, error: null };
-
-// Renderiza el cuerpo del mensaje según su tipo (texto / imagen / audio).
-function MessageBody({ m }: { m: Message }) {
-  const hasMedia = m.media_path || m.media_url;
-  if (m.msg_type === "image" && hasMedia) {
-    return (
-      <div className="space-y-1">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`/dashboard/media/${m.id}`} alt={m.content ?? "imagen"} className="max-h-60 rounded-lg" />
-        {m.content && m.content !== "[imagen]" && <p>{m.content}</p>}
-      </div>
-    );
-  }
-  if (m.msg_type === "audio" && hasMedia) {
-    return <audio controls src={`/dashboard/media/${m.id}`} className="max-w-full" />;
-  }
-  return <p className="whitespace-pre-wrap">{m.content}</p>;
-}
 
 export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] }) {
   const router = useRouter();
@@ -102,6 +85,24 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
         },
         (payload) => {
           setMessages((prev) => [...prev, payload.new as Message]);
+        }
+      )
+      // El worker inserta el mensaje de audio/imagen SIN media_path y lo
+      // completa con un UPDATE al subirlo a Storage: sin esto, el reproductor
+      // no aparece en vivo hasta recargar.
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${selected.conversation_id}`,
+        },
+        (payload) => {
+          const updated = payload.new as Message;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
+          );
         }
       )
       .subscribe();
