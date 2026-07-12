@@ -3,8 +3,10 @@
 //
 // Notas Gemini 3.x (importantes):
 // - NO enviar temperature/top_p/top_k (la API los desaconseja en 3.x).
-// - Usar thinkingLevel (no thinkingBudget). 'low' = fiable en tool-calling con
-//   baja latencia/costo para chat.
+// - thinkingLevel 'low' = fiable en tool-calling con baja latencia/costo para
+//   chat. thinkingBudget: 0 TAMBIÉN es válido en 3.5-flash (verificado
+//   2026-07-12) y apaga el thinking del todo — se usa en reminders (spec 11),
+//   NO aquí: el asesor con tools sí lo necesita.
 // - Function calling estricto: cada functionResponse debe incluir el `id` del
 //   functionCall, con name y conteo coincidentes, o el modelo devuelve vacío.
 // - Thought signatures: se preservan reenviando los `parts` del modelo SIN
@@ -22,9 +24,8 @@ import type { Tenant } from "../tenant";
 export type GeminiPart = Record<string, unknown>;
 export type Content = { role: "user" | "model"; parts: GeminiPart[] };
 
-// Nivel de thinking único para TODAS las llamadas a Gemini del proyecto
-// (asesor y recordatorios). "low" es el mínimo en 3.x: no se puede apagar.
-export const THINKING_LEVEL = "low";
+// Nivel de thinking del asesor (los reminders usan thinkingBudget: 0 aparte).
+const THINKING_LEVEL = "low";
 const MAX_TOOL_ROUNDS = 5;
 
 function endpoint(model: string): string {
