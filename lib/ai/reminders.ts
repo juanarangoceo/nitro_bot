@@ -13,7 +13,7 @@ import { createAdminClient } from "../supabase/admin";
 import { getTenantByPhoneNumberId, type Tenant } from "../tenant";
 import { sendText, type WaCreds } from "../whatsapp/meta";
 import { logEvent } from "../ops/events";
-import { emptyUsage, accumulateUsage, THINKING_LEVEL } from "./gemini";
+import { emptyUsage, accumulateUsage } from "./gemini";
 import { env } from "../env";
 
 const PHASE1_MIN_HOURS = 4;
@@ -96,7 +96,12 @@ async function generateReminderText(
             ],
           },
           contents,
-          generationConfig: { thinkingConfig: { thinkingLevel: THINKING_LEVEL } },
+          // Spec 11: sin thinking. Un reenganche corto no necesita razonar y el
+          // thinking se factura como salida (medido: ~560 tokens por reminder,
+          // 11x su salida real). thinkingBudget: 0 es válido en 3.5-flash
+          // (verificado 2026-07-12 contra v1beta); si la API lo rechazara algún
+          // día, el catch de esta función cae al texto de fallback.
+          generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
         }),
       }
     );
