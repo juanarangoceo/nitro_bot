@@ -1,15 +1,18 @@
 import { getDashboardContext } from "@/lib/dashboard/context";
 import { Sidebar, type NavItem } from "./_components/sidebar";
+import { BillingAlert } from "./_components/billing-alert";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { tenant, user } = await getDashboardContext();
+  const { tenant, user, role } = await getDashboardContext();
   const mod = tenant.modules ?? {};
+  const isAdmin = role === "admin";
 
   // Navegación filtrada por los módulos activos del tenant (tenants.modules).
+  // «Plan» además exige rol admin: los agentes no ven la facturación.
   const items: NavItem[] = [
     { href: "/dashboard", label: "Inicio" },
     ...(mod.tickets !== false ? [{ href: "/dashboard/tickets", label: "Tickets" }] : []),
@@ -21,6 +24,7 @@ export default async function DashboardLayout({
     ...(mod.requests !== false
       ? [{ href: "/dashboard/requests", label: "Solicitudes" }]
       : []),
+    ...(isAdmin && mod.plan !== false ? [{ href: "/dashboard/plan", label: "Plan" }] : []),
     { href: "/dashboard/account", label: "Mi cuenta" },
   ];
 
@@ -35,7 +39,10 @@ export default async function DashboardLayout({
         email={user.email ?? ""}
         items={items}
       />
-      <main className="flex-1 overflow-auto p-8">{children}</main>
+      <main className="flex-1 overflow-auto p-8">
+        <BillingAlert tenant={tenant} isAdmin={isAdmin} />
+        {children}
+      </main>
     </div>
   );
 }

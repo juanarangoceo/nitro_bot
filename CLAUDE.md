@@ -504,7 +504,48 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     crear orden; cierre normal (testMode) → sigue llamando `crear_orden` con
     total correcto ($117.900 con envío).
 
+- **Sesión 2026-07-14 (bis) — Módulo «Plan» + alertas de créditos/facturación
+  (rama `feature/billing-plan`)**:
+  - **Migración #20** (`0020_billing.sql`): `tenants.billing_due_date` (fecha
+    de corte), `billing_status` ('pagado'/'pendiente', default 'pagado' para
+    no alarmar a clientes existentes) y `addon_price` (COP del paquete
+    adicional). La mensualidad sigue siendo `monthly_fee` (migración #8) y el
+    tamaño del plan es `message_limit`.
+  - **`lib/billing.ts`**: constantes de la plataforma — datos de pago (Nequi/
+    Llave `314 668 1896` y Davivienda ahorros `4884 4795 4865`, titular Juan
+    Arango C.C. 1.088.018.943), `ADDON_MESSAGES = 2000`, `billingInfo()`
+    (deriva pendiente/vencida comparando por día en America/Bogota),
+    `formatCop`/`formatDueDate`.
+  - **Dashboard del cliente**: banner global `BillingAlert` en el layout
+    (prioridad: créditos agotados 🚫 > factura vencida 🚫 > ≥80% ⚠️
+    "recuerda recargar para no quedarte sin el servicio") con botón «Ver plan
+    y pagos» SOLO para rol admin (a los agentes les dice que hablen con su
+    administrador). **Módulo nuevo `/dashboard/plan`** (nav «Plan», gate
+    `role === "admin"` — `app_users.role` YA existía desde 0001 y los
+    usuarios creados desde /admin son admin por defecto — + opt-out
+    `modules.plan`): plan contratado, mensualidad, consumo con barra, paquete
+    adicional (si `addon_price`), estado del pago (al día / factura pendiente
+    con monto y corte / vencida), datos de pago y la narrativa "el pago se
+    realiza en la fecha de corte o al agotar los créditos, lo que ocurra
+    primero".
+  - **/admin**: card «Plan y facturación» en el detalle del cliente (fecha de
+    corte, estado pagado/pendiente, precio del adicional; action
+    `updateTenantBilling` auditada `update_billing`); la lista de clientes
+    marca consumo "por agotarse ⚠️"/"sin créditos 🚫" (barra ámbar/roja) y
+    badge "Pago pendiente/VENCIDO · $fee" junto al plan.
+  - **Verificado**: typecheck/build/`verify` 4/4 + prueba desechable (tenant +
+    usuario admin vía RLS): los campos de facturación llegan al cliente
+    authenticated, `role` legible, `billingInfo` detecta pendiente+vencida y
+    consumo 85%. OJO: el gate del módulo es de UI/server (redirect); un
+    'agent' curioso podría leer los campos de facturación por PostgREST — no
+    son secretos del tenant, se aceptó.
+
 ### 🔜 Pendiente
+- **Configurar la facturación de Elegance en /admin** (card «Plan y
+  facturación»): fecha de corte real, estado, y precio del paquete adicional
+  de 2.000 mensajes; revisar que `monthly_fee` y `message_limit` (5.000)
+  estén al día en «Datos del cliente». Sin fecha de corte el módulo muestra
+  "—" y el banner solo salta por consumo ≥80%.
 - **Cancelar en Shopify los pedidos dobles ya creados** (decide el cliente cuál
   conservar): conv `d6107e00` → `8944322511154`, `8944323723570`,
   `8944323887410` (la vigente parece `8944324903218`, $117.900); pares
