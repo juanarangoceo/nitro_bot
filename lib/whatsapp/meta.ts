@@ -316,6 +316,7 @@ export type WaInboundMessage = {
   text?: { body: string };
   audio?: { id: string; mime_type?: string; voice?: boolean };
   image?: { id: string; mime_type?: string; caption?: string };
+  video?: { id: string; mime_type?: string; caption?: string };
 };
 
 export type WaValue = {

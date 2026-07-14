@@ -27,6 +27,10 @@ export type ToolContext = {
   // Herramientas ya ejecutadas en este turno (lo llena executeTool). Permite
   // guards como "no escalar por fuera_de_catalogo sin haber buscado antes".
   calledTools?: Set<string>;
+  // Resultado del crear_orden EXITOSO de este turno (lo llena crearOrden).
+  // Una segunda llamada en el mismo turno (functionCalls paralelos o rondas
+  // posteriores del loop) devuelve esto mismo en vez de crear otra orden.
+  createdOrder?: unknown;
 };
 
 // --- Declaraciones para Gemini (subset OpenAPI) ---------------------------
@@ -145,13 +149,13 @@ export const toolDeclarations = [
   {
     name: "escalar_a_humano",
     description:
-      "Escala la conversación a un agente humano y el asesor DEJA de responder: es el ÚLTIMO recurso. Úsala SOLO si: (a) el cliente tiene un reclamo o problema con un pedido ya realizado, (b) pide explícitamente hablar con una persona, o (c) pide un producto que confirmaste que NO existe llamando buscar_productos en este mismo turno. NUNCA escales por preguntas de envíos, garantías, devoluciones, precios o disponibilidad: eso lo respondes tú con las herramientas y la información de la empresa.",
+      "Escala la conversación a un agente humano y el asesor DEJA de responder: es el ÚLTIMO recurso. Úsala SOLO si: (a) el cliente tiene un reclamo o problema con un pedido ya realizado, (b) pide explícitamente hablar con una persona, (c) pide un producto que confirmaste que NO existe llamando buscar_productos en este mismo turno, o (d) quiere corregir o cambiar una orden que YA fue creada (motivo cambio_en_orden). NUNCA escales por preguntas de envíos, garantías, devoluciones, precios o disponibilidad: eso lo respondes tú con las herramientas y la información de la empresa.",
     parameters: {
       type: "object",
       properties: {
         motivo: {
           type: "string",
-          enum: ["reclamo", "fuera_de_catalogo", "pide_humano", "otro"],
+          enum: ["reclamo", "fuera_de_catalogo", "pide_humano", "cambio_en_orden", "otro"],
         },
       },
       required: ["motivo"],
@@ -250,10 +254,48 @@ function calcularEnvio(ctx: ToolContext, args: Args) {
 // Crea la orden REAL en Shopify (contraentrega). El total y los precios se
 // calculan server-side desde el catálogo, nunca desde la IA.
 async function crearOrden(ctx: ToolContext, args: Args) {
+  // Idempotencia del turno: si crear_orden YA tuvo éxito en este mismo turno
+  // (functionCalls paralelos o una ronda posterior del loop), no se crea otra.
+  if (ctx.createdOrder) {
+    return {
+      ...(ctx.createdOrder as Record<string, unknown>),
+      nota: "La orden YA fue creada en este turno. NO la crees de nuevo; confirma al cliente con estos datos.",
+    };
+  }
   const items = (args.items ?? []) as OrderItem[];
   const cliente = (args.datos_cliente ?? {}) as CustomerData;
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, error: "Sin items." };
+  }
+  // Idempotencia de la conversación: los pedidos dobles reales venían de turnos
+  // de corrección ("ya es en Pereira", "entonces solo el kit") donde el modelo
+  // "corregía" creando OTRA orden. Si ya hay una orden reciente en esta
+  // conversación, no se crea otra: el cambio lo ajusta un humano.
+  if (!ctx.testMode && ctx.conversationId) {
+    const supabase = createAdminClient();
+    const { data: prev } = await supabase
+      .from("orders")
+      .select("total, created_at")
+      .eq("tenant_id", ctx.tenant.id)
+      .eq("conversation_id", ctx.conversationId)
+      .gt("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (prev) {
+      const mins = Math.max(
+        1,
+        Math.round((Date.now() - new Date(prev.created_at).getTime()) / 60_000)
+      );
+      return {
+        ok: false,
+        error:
+          `ORDEN_YA_EXISTE: en esta conversación ya se creó una orden hace ${mins} min ` +
+          `por $${Number(prev.total).toLocaleString("es-CO")}. NO crees otra orden. ` +
+          `Si el cliente quiere corregir o cambiar algo (dirección, ciudad, productos, cantidades), ` +
+          `llama escalar_a_humano con motivo 'cambio_en_orden' y dile que una persona del equipo ajusta su pedido.`,
+      };
+    }
   }
   // Si la IA omitió el teléfono ("al mismo WhatsApp"), el servidor pone el
   // número real del canal — nunca lo decide el modelo.
@@ -298,7 +340,7 @@ async function crearOrden(ctx: ToolContext, args: Args) {
   if (!ctx.shopify) {
     return { ok: false, error: "Credenciales de la tienda no disponibles en el contexto." };
   }
-  return await createCodOrder({
+  const result = await createCodOrder({
     tenantId: ctx.tenant.id,
     creds: ctx.shopify,
     shippingRules: ctx.tenant.shipping_rules ?? {},
@@ -306,6 +348,10 @@ async function crearOrden(ctx: ToolContext, args: Args) {
     items,
     cliente,
   });
+  if (result.ok) {
+    ctx.createdOrder = result;
+  }
+  return result;
 }
 
 // Envía foto(s) del producto al cliente por WhatsApp (link = imagen de Shopify).
