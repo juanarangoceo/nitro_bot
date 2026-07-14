@@ -16,6 +16,7 @@ import { createAdminClient } from "../supabase/admin";
 import { runAssistant, type AssistantResult, type Content, type GeminiPart } from "./gemini";
 import { escalateToHuman } from "./escalation";
 import { logEvent, summarizeToolTrace, type EventKind } from "../ops/events";
+import { sendTelegramAlert, escTelegram } from "../notify/telegram";
 import {
   sendText,
   sendAudio,
@@ -386,9 +387,33 @@ export async function processInboundMessage(params: {
   // 5) Contador de consumo atómico + corte al pasar el límite.
   const { data: counter, error: counterError } = await supabase
     .rpc("increment_message_counter", { p_tenant_id: tenant.id })
-    .maybeSingle<{ over_limit: boolean; at_80_percent: boolean }>();
+    .maybeSingle<{
+      current_count: number;
+      message_limit: number;
+      over_limit: boolean;
+      at_80_percent: boolean;
+    }>();
   if (counterError) {
     console.error(`[worker] increment_message_counter falló:`, counterError.message);
+  }
+  // Alertas al Telegram del dueño por CRUCE exacto (una vez por periodo, sin
+  // dedup extra: el contador solo pasa por cada valor una vez). El umbral del
+  // 80% replica el `(v_limit*0.8)::int` de la función SQL (redondeo).
+  if (counter) {
+    const limit = counter.message_limit;
+    if (counter.current_count === limit + 1) {
+      await sendTelegramAlert(
+        `🔴 <b>${escTelegram(tenant.name)}</b> llegó a su límite (${limit.toLocaleString(
+          "es-CO"
+        )} mensajes): su bot DEJÓ de responder. Cobrar/ampliar ya.`
+      );
+    } else if (counter.current_count === Math.round(limit * 0.8)) {
+      await sendTelegramAlert(
+        `🟠 <b>${escTelegram(tenant.name)}</b> cruzó el 80% de su plan (${counter.current_count.toLocaleString(
+          "es-CO"
+        )}/${limit.toLocaleString("es-CO")} mensajes) — momento de ofrecer la recarga.`
+      );
+    }
   }
   if (counter?.over_limit) {
     console.warn(`[worker] tenant ${tenant.id} superó el límite de mensajes; no respondo.`);

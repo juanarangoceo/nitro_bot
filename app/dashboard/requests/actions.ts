@@ -7,7 +7,8 @@
 
 import { getDashboardContext } from "@/lib/dashboard/context";
 import { logEvent } from "@/lib/ops/events";
-import { REQUEST_CATEGORIES, type RequestCategory } from "@/lib/support/labels";
+import { sendTelegramAlert, escTelegram } from "@/lib/notify/telegram";
+import { CATEGORY_LABELS, REQUEST_CATEGORIES, type RequestCategory } from "@/lib/support/labels";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -51,6 +52,12 @@ export async function createRequest(
     tenantId: tenant.id,
     detail: { category, subject },
   });
+  // Aviso al Telegram del dueño (best-effort; no-op sin env vars).
+  await sendTelegramAlert(
+    `📩 Nueva Solicitud de <b>${escTelegram(tenant.name)}</b> — ${escTelegram(
+      CATEGORY_LABELS[category as RequestCategory] ?? category
+    )}: ${escTelegram(subject)}`
+  );
 
   revalidatePath("/dashboard/requests");
   redirect(`/dashboard/requests/${data.id}`);

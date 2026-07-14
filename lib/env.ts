@@ -53,6 +53,14 @@ export const env = {
   get MISTRAL_VOICE_ID(): string | null {
     return process.env.MISTRAL_VOICE_ID ?? null;
   },
+  // Telegram (opcionales): alertas al DUEÑO de la plataforma (errores,
+  // créditos de clientes, Solicitudes). Sin ellas todo es no-op.
+  get TELEGRAM_BOT_TOKEN(): string | null {
+    return process.env.TELEGRAM_BOT_TOKEN ?? null;
+  },
+  get TELEGRAM_CHAT_ID(): string | null {
+    return process.env.TELEGRAM_CHAT_ID ?? null;
+  },
   // Resend (opcionales): sin ellas las notificaciones por correo son no-op.
   get RESEND_API_KEY(): string | null {
     return process.env.RESEND_API_KEY ?? null;
