@@ -193,6 +193,43 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
   revalidatePath(`/admin/clients/${tenantId}`);
 }
 
+// ── Plan y facturación (fecha de corte, estado del pago, paquete adicional) ─
+// El valor de la mensualidad (monthly_fee) se edita en "Datos del cliente";
+// aquí va lo que el cliente ve en su módulo /dashboard/plan.
+export async function updateTenantBilling(fd: FormData): Promise<void> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  if (!tenantId) return;
+
+  const update: Record<string, unknown> = {};
+  if (fd.has("billing_due_date")) {
+    const due = String(fd.get("billing_due_date") ?? "").trim();
+    if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) return;
+    update.billing_due_date = due || null;
+  }
+  if (fd.has("billing_status")) {
+    const status = String(fd.get("billing_status") ?? "");
+    if (status !== "pagado" && status !== "pendiente") return;
+    update.billing_status = status;
+  }
+  if (fd.has("addon_price")) {
+    const raw = String(fd.get("addon_price") ?? "").trim();
+    if (raw) {
+      const price = Number(raw);
+      if (!Number.isFinite(price) || price < 0) return;
+      update.addon_price = price;
+    } else {
+      update.addon_price = null; // vacío = no ofrecer el paquete adicional
+    }
+  }
+  if (Object.keys(update).length === 0) return;
+
+  await admin.from("tenants").update(update).eq("id", tenantId);
+  await logAudit(admin, { adminId, action: "update_billing", tenantId, detail: update });
+  revalidatePath("/admin");
+  revalidatePath(`/admin/clients/${tenantId}`);
+}
+
 // ── Reiniciar el contador de mensajes (entrega en cero tras pruebas) ────────
 export async function resetMessageCounter(fd: FormData): Promise<void> {
   const { admin, adminId } = await requirePlatformAdmin();

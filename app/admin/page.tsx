@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getPlatformAdminContext } from "@/lib/admin/context";
+import { billingInfo, formatCop } from "@/lib/billing";
 
 type TenantRow = {
   id: string;
@@ -12,23 +13,45 @@ type TenantRow = {
   current_month_messages: number;
   wa_display_name: string | null;
   wa_phone_number_id: string | null;
+  billing_due_date: string | null;
+  billing_status: string | null;
 };
 
 function ConsumptionBar({ used, limit }: { used: number; limit: number }) {
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const out = limit > 0 && used >= limit;
   const over80 = pct >= 80;
   return (
     <div className="w-40">
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
         <div
-          className={`h-full ${over80 ? "bg-amber-500" : "bg-emerald-500"}`}
+          className={`h-full ${out ? "bg-red-500" : over80 ? "bg-amber-500" : "bg-emerald-500"}`}
           style={{ width: `${pct}%` }}
         />
       </div>
       <p className="mt-1 text-[11px] text-neutral-500">
         {used.toLocaleString("es-CO")} / {limit.toLocaleString("es-CO")} ({pct}%)
+        {out ? (
+          <span className="ml-1 font-medium text-red-600">sin créditos 🚫</span>
+        ) : over80 ? (
+          <span className="ml-1 font-medium text-amber-600">por agotarse ⚠️</span>
+        ) : null}
       </p>
     </div>
+  );
+}
+
+function BillingBadge({ t }: { t: TenantRow }) {
+  const billing = billingInfo(t);
+  if (billing.status === "pagado") return null;
+  return (
+    <span
+      className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${
+        billing.overdue ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+      }`}
+    >
+      {billing.overdue ? "Pago VENCIDO" : "Pago pendiente"} · {formatCop(t.monthly_fee)}
+    </span>
   );
 }
 
@@ -37,7 +60,7 @@ export default async function AdminClientsPage() {
   const { data } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, wa_display_name, wa_phone_number_id"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, wa_display_name, wa_phone_number_id, billing_due_date, billing_status"
     )
     .order("created_at", { ascending: true });
   const tenants = (data as TenantRow[]) ?? [];
@@ -86,7 +109,10 @@ export default async function AdminClientsPage() {
                     {t.is_active ? "Activo" : "Pausado"}
                   </span>
                 </td>
-                <td className="px-5 py-3 text-neutral-700">{t.plan ?? "—"}</td>
+                <td className="px-5 py-3 text-neutral-700">
+                  {t.plan ?? "—"}
+                  <BillingBadge t={t} />
+                </td>
                 <td className="px-5 py-3 text-neutral-700">
                   {t.wa_display_name ?? t.wa_phone_number_id ?? "—"}
                 </td>

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPlatformAdminContext } from "@/lib/admin/context";
-import { setTenantActive, updateTenantCommercial } from "../../actions";
+import { setTenantActive, updateTenantCommercial, updateTenantBilling } from "../../actions";
+import { ADDON_MESSAGES, billingInfo, formatCop, formatDueDate } from "@/lib/billing";
 import {
   PromptEditor,
   BusinessInfoEditor,
@@ -55,7 +56,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price"
     )
     .eq("id", id)
     .maybeSingle();
@@ -282,6 +283,81 @@ export default async function ClientDetailPage({
           </div>
         </Card>
       </div>
+
+      <Card title="Plan y facturación">
+        {(() => {
+          const billing = billingInfo(t);
+          const paid = billing.status === "pagado";
+          return (
+            <p className="mb-3 text-xs">
+              El cliente lo ve en su módulo «Plan» (solo usuarios con rol admin).{" "}
+              <span
+                className={
+                  paid
+                    ? "font-medium text-emerald-600"
+                    : billing.overdue
+                      ? "font-medium text-red-600"
+                      : "font-medium text-amber-600"
+                }
+              >
+                {paid
+                  ? `Al día · corte ${formatDueDate(billing.dueDate)}`
+                  : `${billing.overdue ? "VENCIDA" : "Pendiente"} · ${formatCop(
+                      t.monthly_fee
+                    )} · corte ${formatDueDate(billing.dueDate)}`}
+              </span>
+            </p>
+          );
+        })()}
+        <form action={updateTenantBilling} className="grid gap-3 sm:grid-cols-3">
+          <input type="hidden" name="tenant_id" value={t.id} />
+          <label className="block">
+            <span className="text-xs font-medium text-neutral-600">Fecha de corte</span>
+            <input
+              name="billing_due_date"
+              type="date"
+              defaultValue={t.billing_due_date ?? ""}
+              className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-neutral-600">Estado del pago</span>
+            <select
+              name="billing_status"
+              defaultValue={t.billing_status ?? "pagado"}
+              className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+            >
+              <option value="pagado">Pagado</option>
+              <option value="pendiente">Pendiente</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-neutral-600">
+              Adicional {ADDON_MESSAGES.toLocaleString("es-CO")} msgs (COP; vacío = no ofrecer)
+            </span>
+            <input
+              name="addon_price"
+              type="number"
+              min={0}
+              defaultValue={t.addon_price ?? ""}
+              className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+            />
+          </label>
+          <div className="sm:col-span-3">
+            <p className="text-xs text-neutral-400">
+              La mensualidad (COP) y el límite de mensajes del plan se editan en «Datos del
+              cliente». Al registrar un pago: marca «Pagado» y mueve la fecha de corte al
+              siguiente periodo; si vendes un paquete adicional, súmalo al límite de mensajes.
+            </p>
+            <button
+              type="submit"
+              className="mt-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+            >
+              Guardar facturación
+            </button>
+          </div>
+        </form>
+      </Card>
 
       <Card title="Conexión Shopify (OAuth)">
         <ShopifyConnect
