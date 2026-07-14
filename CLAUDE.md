@@ -540,7 +540,37 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     'agent' curioso podría leer los campos de facturación por PostgREST — no
     son secretos del tenant, se aceptó.
 
+- **Sesión 2026-07-14 (ter) — Fix respuesta corrupta (caso Patricio) + correos
+  solo por tickets (rama `fix/history-model-turn-emails`)**:
+  - **Bug real en producción (conv `acc0f1e7…`)**: 2 mensajes
+    del cliente separados por 9,2s (justo sobre el debounce de 8s) → 2 workers
+    paralelos; el worker A envió la FOTO (la tool `enviar_imagen_producto`
+    inserta un mensaje del bot al historial DURANTE el turno) y su texto fue
+    descartado por el "último gana" nuevo; el worker B leyó el historial
+    DESPUÉS de la foto → su `contents` terminó en TURNO DEL MODELO y Gemini
+    "continuó" ese turno: completó la ficha a mitad de frase con **precio
+    inventado ($155.000; el real es $180.000)** e inventó el siguiente mensaje
+    del cliente ("--- Hola, buenas…"). Es OTRA cara de la regla "el contents
+    debe terminar en turno del cliente" (además del texto vacío ya conocido).
+  - **Fix**: en el worker, tras armar `history`, se recorta del final toda
+    fila `sender !== 'customer'` (y guard de historial vacío). **Reproducido y
+    verificado contra Gemini real**: sin recorte → continuación basura sin
+    tools; con recorte → `buscar_productos` + foto + precio real $180.000.
+  - **Correos solo accionables**: se eliminó `notifyNewConversation` (worker y
+    email.ts) — con 75-100 conversaciones nuevas/día agotaba la cuota diaria
+    de Resend gratis (100/día; 36 `notify_failure` el 2026-07-13) y tumbaba
+    los correos que SÍ importan. Quedan: tickets escalados y Solicitudes.
+  - **Chequeo de salud del día**: 0 pedidos dobles post-deploy;
+    `stale_reply_dropped` ya evitó 2 dobles respuestas; 1 solo error 24h
+    (Gemini "service unavailable" → escaló bien); 398 reminders/24h.
+
 ### 🔜 Pendiente
+- **Avisar a Elegance: corregir precio al cliente de la conv `acc0f1e7…`**
+  (el repo es público: NO poner aquí su teléfono/nombre; búscalo por el id en
+  la DB o en Conversaciones) — el bot le dijo $155.000 por el trípode Q185
+  pero vale $180.000 (mensaje corrupto del 2026-07-14 02:34 UTC, bug ya
+  arreglado). La conversación sigue `bot_active`; si confirma, la orden
+  saldría por el precio real ($180.000), distinto a lo prometido.
 - **Configurar la facturación de Elegance en /admin** (card «Plan y
   facturación»): fecha de corte real, estado, y precio del paquete adicional
   de 2.000 mensajes; revisar que `monthly_fee` y `message_limit` (5.000)
