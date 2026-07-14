@@ -18,7 +18,9 @@ export type EventKind =
   | "oauth_failure"
   | "reminder"
   | "backup"
-  | "support_request";
+  | "support_request"
+  | "video_received"
+  | "stale_reply_dropped";
 
 export type EventSeverity = "info" | "warning" | "error";
 

@@ -240,7 +240,13 @@ export function ConversationsClient({
                 }`}
               >
                 <MessageBody m={m} />
-                <span className="mt-1 block text-[10px] opacity-60">{m.sender}</span>
+                <span className="mt-1 block text-[10px] opacity-60">
+                  {m.sender} ·{" "}
+                  {new Date(m.created_at).toLocaleTimeString("es-CO", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
               </div>
             ))}
           </div>

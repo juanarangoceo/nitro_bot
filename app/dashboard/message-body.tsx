@@ -46,5 +46,19 @@ export function MessageBody({ m }: { m: MediaMessage }) {
       : `/dashboard/media/${m.id}?format=wav`;
     return <audio controls src={src} className="max-w-full" />;
   }
+  if (m.msg_type === "video" && hasMedia) {
+    const caption = m.content?.replace(/^\[video\]\s*/, "");
+    return (
+      <div className="space-y-1">
+        <video
+          controls
+          preload="metadata"
+          src={`/dashboard/media/${m.id}`}
+          className="max-h-60 w-full rounded-lg"
+        />
+        {caption && <p>{caption}</p>}
+      </div>
+    );
+  }
   return <p className="whitespace-pre-wrap">{m.content}</p>;
 }

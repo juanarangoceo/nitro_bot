@@ -461,7 +461,61 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     real: `thoughts=0`, STOP, calidad/tono igual. Si la API rechazara el
     parámetro, el catch existente cae al texto fijo de fallback.
 
+- **Sesión 2026-07-14 — Videos entrantes + hora en burbujas + fix pedidos
+  dobles (rama `feature/video-hora-orden-dedup`, DESPLEGADO en producción)**:
+  - **Videos entrantes (reporte del cliente: "formato equivocado" y el agente
+    no sabía qué video era)**. Migración #19: `messages.msg_type` admite
+    `'video'` — OJO: el CHECK de msg_type NO existía en la DB viva (0001 se
+    editó después de aplicado); la migración usa `drop if exists` + `add` y lo
+    normaliza. `shapeInbound` case `video` (content `[video] caption`), el
+    video se descarga y persiste en `wa-media` (`extFor` + `video/mp4`/`3gpp`)
+    y **JAMÁS va inline a Gemini** (~300 tokens/seg; filtro `video/*` en
+    `collectTurnMedia`). El worker corta ANTES de llamar a Gemini si el turno
+    pendiente trae un video: respuesta enlatada `VIDEO_RECEIVED_REPLY` +
+    ticket `video_recibido` + `event_log` kind `video_received` — **cero
+    tokens**. Helper nuevo `escalateWithCannedReply` (generaliza el escalado
+    de fallo técnico; ambos lo usan). `MessageBody` reproduce el video
+    (`<video controls>`; el route handler `/dashboard/media/[id]` sirvió sin
+    cambios y el UPDATE de Realtime del 07-12 lo muestra en vivo).
+  - **Hora en las burbujas** de Conversaciones y Tickets (pedido del cliente):
+    `sender · HH:mm` (`toLocaleTimeString es-CO`; `created_at` ya venía en el
+    select y en Realtime, solo faltaba renderizarlo).
+  - **Fix pedidos dobles — CONFIRMADO en producción**: 3 conversaciones del
+    12-13 jul con 2/2/4 órdenes (gaps 9s–2min). Causas reales (transcripción):
+    (1) el cliente corrige datos POST-orden ("Ya es en Pereira", "solo el
+    kit") y el modelo "corregía" creando OTRA orden — cero idempotencia en
+    todo el flujo; (2) carrera del debounce: 2 mensajes a ~8,5s → 2 workers
+    solapados → doble respuesta + doble orden. Fix en 4 capas:
+    **(a)** guard 24h por conversación en `crearOrden` (`ORDEN_YA_EXISTE` con
+    minutos y total → instruye escalar con motivo NUEVO `cambio_en_orden`);
+    **(b)** guard de mismo turno `ctx.createdOrder` (functionCalls paralelos o
+    rondas 2+ devuelven el mismo resultado; los reintentos por
+    `FALTA_DEPARTAMENTO` siguen vivos porque solo se memoriza el ÉXITO);
+    **(c)** regla de prompt "UNA sola orden por venta; correcciones →
+    escalar"; **(d)** re-check "último gana" justo antes de ENVIAR la
+    respuesta (si llegó un mensaje más nuevo se descarta, `event_log`
+    `stale_reply_dropped`) — mata la doble respuesta de la carrera. SIN unique
+    constraint en `orders(conversation_id)`: compras legítimas repetidas en el
+    tiempo son válidas; el corte es la ventana de 24h. Los cambios a órdenes
+    existentes SIEMPRE van a humano (el bot no tiene tool de editar/cancelar).
+  - **Verificado**: migración aplicada; typecheck/build/`verify` 4/4; guard
+    2/2 contra la DB (script desechable); y 2 pruebas contra **Gemini real**:
+    turno de corrección → escala `cambio_en_orden` SIN llamar `crear_orden` ni
+    crear orden; cierre normal (testMode) → sigue llamando `crear_orden` con
+    total correcto ($117.900 con envío).
+
 ### 🔜 Pendiente
+- **Cancelar en Shopify los pedidos dobles ya creados** (decide el cliente cuál
+  conservar): conv `d6107e00` → `8944322511154`, `8944323723570`,
+  `8944323887410` (la vigente parece `8944324903218`, $117.900); pares
+  idénticos `8944163324210`/`8944164929842` ($128.000) y
+  `8941868908850`/`8941871563058` ($73.000) → cancelar uno de cada par.
+- **Post-deploy 2026-07-14**: (1) mandar un VIDEO real por WhatsApp → enlatado
+  + ticket `video_recibido` + video reproducible en Tickets/Conversaciones;
+  (2) orden de prueba + corrección después ("cámbiame la dirección") → NO se
+  crea 2ª orden, escala `cambio_en_orden` (cancelar la orden de prueba);
+  (3) a las 48h, query de `orders` agrupada por `conversation_id` → cero
+  duplicados nuevos; vigilar `stale_reply_dropped` en /admin/health.
 - **Control post-deploy spec 11 (24h)**: en `/admin/health` → "Tokens Gemini"
   (o query a `event_log` kind `gemini_usage` agrupada por `detail->>'source'`),
   `reminder` debe registrar `thoughtsTokens ≈ 0` con mensajes de calidad

@@ -15,7 +15,7 @@
 import { createAdminClient } from "../supabase/admin";
 import { runAssistant, type AssistantResult, type Content, type GeminiPart } from "./gemini";
 import { escalateToHuman } from "./escalation";
-import { logEvent, summarizeToolTrace } from "../ops/events";
+import { logEvent, summarizeToolTrace, type EventKind } from "../ops/events";
 import { notifyNewConversation } from "../notify/email";
 import {
   sendText,
@@ -49,7 +49,7 @@ function toE164(from: string): string {
 }
 
 type InboundShape = {
-  msgType: "text" | "audio" | "image" | "other";
+  msgType: "text" | "audio" | "image" | "video" | "other";
   content: string; // texto o placeholder (lo que se guarda en messages.content)
   mediaId: string | null; // id de media en Meta, si aplica
 };
@@ -67,6 +67,17 @@ function shapeInbound(message: WaInboundMessage): InboundShape {
         content: message.image?.caption ?? "[imagen]",
         mediaId: message.image?.id ?? null,
       };
+    case "video": {
+      // El video se descarga y persiste (el agente lo ve en el panel), pero
+      // JAMÁS va inline a Gemini ni genera un turno de IA: el worker responde
+      // enlatado y escala (ver el short-circuit en processInboundMessage).
+      const caption = message.video?.caption?.trim();
+      return {
+        msgType: "video",
+        content: caption ? `[video] ${caption}` : "[video]",
+        mediaId: message.video?.id ?? null,
+      };
+    }
     default:
       return { msgType: "other", content: "[mensaje no soportado]", mediaId: null };
   }
@@ -75,6 +86,7 @@ function shapeInbound(message: WaInboundMessage): InboundShape {
 type HistoryRow = {
   id: string;
   sender: string;
+  msg_type: string;
   content: string | null;
   media_path: string | null;
   media_mime: string | null;
@@ -120,10 +132,16 @@ async function collectTurnMedia(
       break;
     }
   }
-  const pending = history.slice(lastBotIdx + 1).filter((r) => r.media_path);
+  // Los videos jamás van inline a Gemini (~300 tokens/segundo): en el historial
+  // quedan solo como texto "[video]".
+  const isVideo = (mime: string | null | undefined) => (mime ?? "").startsWith("video/");
+  const current = currentMedia && !isVideo(currentMedia.mimeType) ? currentMedia : null;
+  const pending = history
+    .slice(lastBotIdx + 1)
+    .filter((r) => r.media_path && !isVideo(r.media_mime));
   for (const row of pending.slice(-MAX_TURN_MEDIA)) {
-    if (row.id === currentMessageId && currentMedia) {
-      mediaById.set(row.id, { mimeType: currentMedia.mimeType, base64: currentMedia.base64 });
+    if (row.id === currentMessageId && current) {
+      mediaById.set(row.id, { mimeType: current.mimeType, base64: current.base64 });
       continue;
     }
     const bytes = await downloadWaMedia(row.media_path!);
@@ -135,10 +153,10 @@ async function collectTurnMedia(
   }
   // El mensaje actual puede no tener media_path (upload a Storage fallido) pero
   // sí media en memoria: nunca se pierde.
-  if (currentMedia && !mediaById.has(currentMessageId)) {
+  if (current && !mediaById.has(currentMessageId)) {
     mediaById.set(currentMessageId, {
-      mimeType: currentMedia.mimeType,
-      base64: currentMedia.base64,
+      mimeType: current.mimeType,
+      base64: current.base64,
     });
   }
   return mediaById;
@@ -149,8 +167,56 @@ async function collectTurnMedia(
 const TECH_FAILURE_REPLY =
   "Dame un momento, voy a conectarte con una persona del equipo para ayudarte con esto. 🙂";
 
-// Escalado automático por fallo técnico: ticket + aviso al cliente + traza en
-// event_log. Cada paso es best-effort: el fallo de uno no impide los demás.
+// Video entrante: el bot no lo interpreta (sería carísimo en Gemini); se
+// persiste para que el agente lo VEA en el panel y se escala bien etiquetado.
+const VIDEO_RECEIVED_REPLY =
+  "¡Recibí tu video! 🙌 Se lo paso a una persona del equipo para que lo revise contigo.";
+
+// Escalado con respuesta enlatada (sin llamar a la IA): ticket + aviso al
+// cliente + traza en event_log. Cada paso es best-effort: el fallo de uno no
+// impide los demás.
+async function escalateWithCannedReply(params: {
+  tenant: Tenant;
+  conversationId: string;
+  wa: WaCreds;
+  phone: string;
+  reply: string;
+  reason: string;
+  kind: EventKind;
+  severity: "info" | "warning" | "error";
+  detail: unknown;
+}): Promise<void> {
+  const { tenant, conversationId, wa, phone, reply, reason, kind, severity, detail } = params;
+  const supabase = createAdminClient();
+
+  try {
+    await escalateToHuman({
+      tenantId: tenant.id,
+      conversationId,
+      reason,
+    });
+  } catch (e) {
+    console.error(`[worker] escalado (${reason}) no se pudo registrar:`, e);
+  }
+
+  try {
+    const outboundId = await sendText(wa, phone, reply);
+    await supabase.from("messages").insert({
+      tenant_id: tenant.id,
+      conversation_id: conversationId,
+      wa_message_id: outboundId,
+      sender: "bot",
+      msg_type: "text",
+      content: reply,
+    });
+  } catch (e) {
+    console.error("[worker] no se pudo avisar al cliente del escalado:", e);
+  }
+
+  await logEvent({ kind, severity, tenantId: tenant.id, conversationId, detail });
+}
+
+// Escalado automático por fallo técnico (runAssistant lanzó o agotó el loop).
 async function escalateTechnicalFailure(params: {
   tenant: Tenant;
   conversationId: string;
@@ -158,39 +224,12 @@ async function escalateTechnicalFailure(params: {
   phone: string;
   detail: unknown;
 }): Promise<void> {
-  const { tenant, conversationId, wa, phone, detail } = params;
-  const supabase = createAdminClient();
-
-  try {
-    await escalateToHuman({
-      tenantId: tenant.id,
-      conversationId,
-      reason: "fallo_tecnico",
-    });
-  } catch (e) {
-    console.error("[worker] escalado por fallo técnico no se pudo registrar:", e);
-  }
-
-  try {
-    const outboundId = await sendText(wa, phone, TECH_FAILURE_REPLY);
-    await supabase.from("messages").insert({
-      tenant_id: tenant.id,
-      conversation_id: conversationId,
-      wa_message_id: outboundId,
-      sender: "bot",
-      msg_type: "text",
-      content: TECH_FAILURE_REPLY,
-    });
-  } catch (e) {
-    console.error("[worker] no se pudo avisar al cliente del escalado:", e);
-  }
-
-  await logEvent({
+  await escalateWithCannedReply({
+    ...params,
+    reply: TECH_FAILURE_REPLY,
+    reason: "fallo_tecnico",
     kind: "escalation_auto",
     severity: "error",
-    tenantId: tenant.id,
-    conversationId,
-    detail,
   });
 }
 
@@ -378,13 +417,39 @@ export async function processInboundMessage(params: {
   // solo mensajes posteriores al último cierre (closed_at).
   let historyQuery = supabase
     .from("messages")
-    .select("id, sender, content, media_path, media_mime")
+    .select("id, sender, msg_type, content, media_path, media_mime")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(MAX_HISTORY);
   if (historyCutoff) historyQuery = historyQuery.gt("created_at", historyCutoff);
   const { data: recent } = await historyQuery;
   const history: HistoryRow[] = (recent ?? []).reverse();
+
+  // Video en el turno pendiente → respuesta enlatada + ticket, SIN llamar a
+  // Gemini (cero tokens). El video ya quedó persistido en Storage: el agente lo
+  // ve y lo reproduce en el panel de Tickets/Conversaciones.
+  let lastBotIdx = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].sender !== "customer") {
+      lastBotIdx = i;
+      break;
+    }
+  }
+  const pendingTurn = history.slice(lastBotIdx + 1);
+  if (shaped.msgType === "video" || pendingTurn.some((r) => r.msg_type === "video")) {
+    await escalateWithCannedReply({
+      tenant,
+      conversationId,
+      wa,
+      phone,
+      reply: VIDEO_RECEIVED_REPLY,
+      reason: "video_recibido",
+      kind: "video_received",
+      severity: "info",
+      detail: { message_id: currentMessageId, mime: media?.mimeType ?? null },
+    });
+    return;
+  }
 
   const mediaById = await collectTurnMedia(history, currentMessageId, media);
   const contents = buildContents(history, mediaById);
@@ -489,7 +554,32 @@ export async function processInboundMessage(params: {
     return;
   }
 
-  // 7) Enviar por WhatsApp y persistir la respuesta del bot (idempotente por su wamid).
+  // 7) "Último gana" también al ENVIAR: si mientras Gemini generaba llegó un
+  //    mensaje más nuevo del cliente (p. ej. dos mensajes separados por ~8,5s
+  //    que burlan el debounce → dos workers solapados), esta respuesta ya está
+  //    desactualizada: se descarta y responde el worker del mensaje nuevo con
+  //    el historial completo. Sin esto la carrera producía DOS respuestas del
+  //    bot (y hasta dos órdenes) en la misma conversación.
+  const { data: latestNow } = await supabase
+    .from("messages")
+    .select("wa_message_id")
+    .eq("conversation_id", conversationId)
+    .eq("sender", "customer")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latestNow?.wa_message_id !== message.id) {
+    await logEvent({
+      kind: "stale_reply_dropped",
+      severity: "info",
+      tenantId: tenant.id,
+      conversationId,
+      detail: { message_id: currentMessageId },
+    });
+    return;
+  }
+
+  // 8) Enviar por WhatsApp y persistir la respuesta del bot (idempotente por su wamid).
   //    Turno de voz: se sintetiza el texto de Gemini con Mistral y se envía como
   //    nota de voz. Cualquier fallo (TTS, upload o envío) cae a texto: el
   //    cliente SIEMPRE recibe respuesta. El texto se guarda como content aunque

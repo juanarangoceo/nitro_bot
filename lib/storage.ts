@@ -22,6 +22,8 @@ function extFor(mime: string): string {
     "audio/mp4": "m4a",
     "audio/amr": "amr",
     "audio/aac": "aac",
+    "video/mp4": "mp4",
+    "video/3gpp": "3gp",
   };
   return map[mime.split(";")[0].trim().toLowerCase()] ?? "bin";
 }
