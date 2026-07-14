@@ -564,6 +564,27 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     `stale_reply_dropped` ya evitó 2 dobles respuestas; 1 solo error 24h
     (Gemini "service unavailable" → escaló bien); 398 reminders/24h.
 
+- **Sesión 2026-07-14 (quater) — Feature C spec 07: alertas Telegram al DUEÑO
+  (rama `feature/telegram-alerts`; falta solo el token del bot para probar)**:
+  - **`lib/notify/telegram.ts`**: `sendTelegramAlert` best-effort (patrón
+    email/tts: JAMÁS lanza, timeout 10s, no-op sin `TELEGRAM_BOT_TOKEN`/
+    `TELEGRAM_CHAT_ID` → desplegable sin configurar, rollback = borrar las
+    vars). Fallos SOLO a console (nunca logEvent: evita recursión). Bot API
+    pura con fetch, parse_mode HTML. Costo $0, sin cuotas (vs Resend).
+  - **3 hooks**: (a) `logEvent` con `severity=error` → 🔴 (punto único: cubre
+    assistant_error/escalation_auto/queue_failure/oauth_failure y futuros);
+    (b) worker paso 5 → cruce EXACTO de créditos: 🟠 al 80%
+    (`current_count === Math.round(limit*0.8)`, fórmula verificada idéntica
+    al `(v*0.8)::int` de SQL en 7 límites) y 🔴 al llegar al límite
+    (`current_count === limit+1`) — una vez por periodo sin dedup extra
+    porque el contador pasa por cada valor una sola vez (OJO:
+    `at_80_percent` del RPC es true en CADA mensaje desde el 80%, por eso NO
+    se usa para alertar); (c) creación de Solicitud → 📩 con tenant +
+    categoría + asunto. Decisión de Juan: SIN aviso por cada venta.
+  - **Setup**: `npm run telegram:test` — sin CHAT_ID lista los chat_id que le
+    escribieron al bot (getUpdates); con todo, manda el mensaje de conexión.
+    Verificado: typecheck/build/verify 4/4 y no-op limpio sin envs.
+
 ### 🔜 Pendiente
 - **Avisar a Elegance: corregir precio al cliente de la conv `acc0f1e7…`**
   (el repo es público: NO poner aquí su teléfono/nombre; búscalo por el id en
@@ -624,10 +645,13 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
 - **Resend con dominio propio**: verificar dominio en Resend y cambiar
   `NOTIFY_FROM_EMAIL` (hoy `onboarding@resend.dev` solo entrega al correo del
   dueño de la cuenta).
-- **Spec 07 diferidas**: Feature C (Telegram `lib/notify/telegram.ts` +
-  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`) y Feature H (backup semanal a
-  Drive). Feature D (Resend) YA está hecha. Engancharlas en
-  `lib/ai/escalation.ts` (punto único de tickets) y `event_log`.
+- **Activar Telegram (Feature C YA construida, 2026-07-14)**: Juan crea el bot
+  con @BotFather, corre `npm run telegram:test` para sacar su chat_id, y carga
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` en `.env.local` y Vercel Production.
+  Sin las vars todo es no-op. Probar: `telegram:test` (✅ de conexión) y un
+  `logEvent` de error de prueba.
+- **Spec 07 diferida**: Feature H (backup semanal a Drive). Features C
+  (Telegram) y D (Resend) YA están hechas.
 - **Probar en vivo spec 07 y 08** (escalado por fallo, /admin/health, probador,
   flujo OAuth completo con una app del Dev Dashboard). Vercel opcional:
   `META_APP_ID` (subida de la foto de perfil de WhatsApp en el alta).

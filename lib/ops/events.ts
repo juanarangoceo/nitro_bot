@@ -6,6 +6,7 @@
 // REGLA: nunca poner tokens, claves ni datos sensibles en `detail`.
 
 import { createAdminClient } from "../supabase/admin";
+import { sendTelegramAlert, escTelegram } from "../notify/telegram";
 
 export type EventKind =
   | "assistant_error"
@@ -43,6 +44,21 @@ export async function logEvent(params: {
   } catch (e) {
     // Best-effort: si la DB también falla, solo consola.
     console.error("[ops] no se pudo registrar event_log:", e);
+  }
+
+  // Los ERRORES también van al Telegram del dueño (punto único: cubre
+  // assistant_error, escalation_auto, queue_failure, oauth_failure y futuros).
+  // sendTelegramAlert jamás lanza y es no-op sin las env vars.
+  if (params.severity === "error") {
+    const detail = JSON.stringify(params.detail ?? {}).slice(0, 200);
+    await sendTelegramAlert(
+      `🔴 <b>${escTelegram(params.kind)}</b>\n` +
+        (params.tenantId ? `tenant: <code>${escTelegram(params.tenantId.slice(0, 8))}</code>\n` : "") +
+        (params.conversationId
+          ? `conv: <code>${escTelegram(params.conversationId.slice(0, 8))}</code>\n`
+          : "") +
+        escTelegram(detail)
+    );
   }
 }
 
