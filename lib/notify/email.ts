@@ -68,36 +68,9 @@ async function notificationTarget(
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-// Correo cuando un cliente NUEVO inicia conversación con el asesor.
-// Nunca lanza: está en el camino del worker.
-export async function notifyNewConversation(params: {
-  tenantId: string;
-  conversationId: string;
-  customerPhone: string;
-  contactName?: string | null;
-}): Promise<void> {
-  try {
-    const target = await notificationTarget(params.tenantId);
-    if (!target) return;
-
-    const who = params.contactName
-      ? `${esc(params.contactName)} (${esc(params.customerPhone)})`
-      : esc(params.customerPhone);
-    await sendEmail({
-      to: target.email,
-      subject: `Nueva conversación en ${target.tenantName}`,
-      html: `
-        <p>Un cliente nuevo escribió al asesor de <strong>${esc(target.tenantName)}</strong>:</p>
-        <p style="font-size:16px"><strong>${who}</strong></p>
-        <p>El asesor de IA ya lo está atendiendo. Puedes seguir la conversación en vivo desde tu dashboard (sección <em>Conversaciones</em>).</p>
-      `,
-      tenantId: params.tenantId,
-      conversationId: params.conversationId,
-    });
-  } catch (e) {
-    console.error("[notify] nueva conversación:", e);
-  }
-}
+// NOTA: el correo por conversación NUEVA se eliminó (2026-07-14): con 75-100
+// conversaciones/día agotaba la cuota diaria de Resend (plan gratis, 100/día)
+// y los avisos que SÍ requieren acción (tickets, Solicitudes) se perdían.
 
 // Correo cuando una conversación se escala a humano (ticket abierto):
 // requiere acción del equipo de la tienda. Nunca lanza: está en el camino

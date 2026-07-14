@@ -16,7 +16,6 @@ import { createAdminClient } from "../supabase/admin";
 import { runAssistant, type AssistantResult, type Content, type GeminiPart } from "./gemini";
 import { escalateToHuman } from "./escalation";
 import { logEvent, summarizeToolTrace, type EventKind } from "../ops/events";
-import { notifyNewConversation } from "../notify/email";
 import {
   sendText,
   sendAudio,
@@ -286,14 +285,6 @@ export async function processInboundMessage(params: {
       return;
     }
     conv = inserted;
-    // Conversación NUEVA: aviso por correo al equipo del cliente (best-effort,
-    // dentro de notifyNewConversation nada lanza hacia afuera).
-    await notifyNewConversation({
-      tenantId: tenant.id,
-      conversationId: inserted.id,
-      customerPhone: phone,
-      contactName,
-    });
   } else {
     const update: Record<string, unknown> = {
       last_customer_message_at: new Date().toISOString(),
@@ -424,6 +415,23 @@ export async function processInboundMessage(params: {
   if (historyCutoff) historyQuery = historyQuery.gt("created_at", historyCutoff);
   const { data: recent } = await historyQuery;
   const history: HistoryRow[] = (recent ?? []).reverse();
+
+  // El contexto DEBE terminar en turno del cliente (regla Gemini 3.x: si
+  // termina en turno del modelo, Gemini "continúa" ese turno en vez de
+  // responder — llegó a completar una ficha de producto con precio inventado
+  // e inventar el siguiente mensaje del cliente). Puede pasar cuando un worker
+  // paralelo (mensajes separados por ~8-9s) inserta un mensaje del bot (p.ej.
+  // la foto de enviar_imagen_producto) después del mensaje que dispara este
+  // turno: se recorta del final todo lo que no sea del cliente.
+  while (history.length && history[history.length - 1].sender !== "customer") {
+    history.pop();
+  }
+  if (history.length === 0) {
+    console.warn(
+      `[worker] historial sin turno de cliente al final (conv=${conversationId}); no llamo a Gemini.`
+    );
+    return;
+  }
 
   // Video en el turno pendiente → respuesta enlatada + ticket, SIN llamar a
   // Gemini (cero tokens). El video ya quedó persistido en Storage: el agente lo
