@@ -642,10 +642,10 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     filtro .or). OJO: el UPDATE de un agente sobre ticket_labels no da error
     (grant de columna lo permite) pero la policy deja 0 filas — seguro.
 
-- **Sesión 2026-07-15 (bis) — Números de prueba por tenant (migración #22,
-  typecheck/build verdes, 4 checks DB)**: Juan puede probar desde su número
-  real (+573146681896, ya configurado para Elegance dev) sin gastar el plan
-  del cliente.
+- **Sesión 2026-07-15 (bis) — Números de prueba por tenant (DESPLEGADO:
+  merge `4c48ebe`, migración #22 aplicada, health OK; typecheck/build verdes,
+  4 checks DB)**: Juan puede probar desde su número real (+573146681896, ya
+  configurado para Elegance dev) sin gastar el plan del cliente.
   - **`tenants.test_phones` (jsonb)**: lista E.164 editable en /admin («Datos
     del cliente», coma-separada, se normaliza a +57). El worker marca la
     conversación `is_test` al entrar el número (y lo REVIERTE si el número
