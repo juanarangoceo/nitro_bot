@@ -9,6 +9,7 @@ import { escalateToHuman } from "./escalation";
 import { createCodOrder, type OrderItem, type CustomerData } from "../shopify/orders";
 import { resolveDepartment } from "../shopify/colombia";
 import { sendImage, type WaCreds } from "../whatsapp/meta";
+import { resolveLabelId, type TicketLabel } from "../tickets/labels";
 import type { ShopifyCreds } from "../shopify/client";
 import type { Tenant } from "../tenant";
 
@@ -31,6 +32,13 @@ export type ToolContext = {
   // Una segunda llamada en el mismo turno (functionCalls paralelos o rondas
   // posteriores del loop) devuelve esto mismo en vez de crear otra orden.
   createdOrder?: unknown;
+  // URLs de fotos de producto enviadas EN ESTE TURNO (lo llena
+  // enviarImagenProducto). Evita repetir la misma foto en functionCalls
+  // paralelos y cubre el modo dev sin conversación en DB.
+  sentImageUrls?: Set<string>;
+  // Etiquetas activas del tenant (las carga runAssistant): alimentan el enum
+  // de `etiqueta` en escalar_a_humano y la resolución del label del ticket.
+  ticketLabels?: TicketLabel[];
 };
 
 // --- Declaraciones para Gemini (subset OpenAPI) ---------------------------
@@ -142,6 +150,11 @@ export const toolDeclarations = [
           description:
             "Cuántas fotos enviar (1 a 4, default 1). Usa más de 1 SOLO si el cliente pide ver más fotos o ángulos del producto.",
         },
+        reenviar: {
+          type: "boolean",
+          description:
+            "SOLO true si el cliente pide EXPLÍCITAMENTE que le reenvíes una foto que ya le mandaste. Por defecto la herramienta nunca repite fotos ya enviadas en la conversación.",
+        },
       },
       required: ["producto_id"],
     },
@@ -162,6 +175,33 @@ export const toolDeclarations = [
     },
   },
 ];
+
+// Declaraciones por tenant: si el tenant tiene etiquetas de tickets activas,
+// escalar_a_humano gana un parámetro `etiqueta` con enum de esas etiquetas
+// (opcional: si la IA lo omite, el server resuelve por el motivo). Sin
+// etiquetas, devuelve las declaraciones base idénticas (mismo prefijo →
+// misma caché implícita de Gemini que hoy).
+export function buildToolDeclarations(labelNames: string[]) {
+  if (labelNames.length === 0) return toolDeclarations;
+  return toolDeclarations.map((decl) => {
+    if (decl.name !== "escalar_a_humano") return decl;
+    return {
+      ...decl,
+      parameters: {
+        ...decl.parameters,
+        properties: {
+          ...decl.parameters.properties,
+          etiqueta: {
+            type: "string",
+            enum: labelNames,
+            description:
+              "Área del equipo que debe atender el caso; elige la más afín al motivo.",
+          },
+        },
+      },
+    };
+  });
+}
 
 // --- Implementaciones ------------------------------------------------------
 type Args = Record<string, unknown>;
@@ -363,6 +403,7 @@ async function crearOrden(ctx: ToolContext, args: Args) {
 async function enviarImagenProducto(ctx: ToolContext, args: Args) {
   const productoId = String(args.producto_id ?? "");
   const cantidad = Math.min(4, Math.max(1, Math.trunc(Number(args.cantidad)) || 1));
+  const reenviar = args.reenviar === true;
   const supabase = createAdminClient();
   const { data: prod } = await supabase
     .from("products")
@@ -374,14 +415,77 @@ async function enviarImagenProducto(ctx: ToolContext, args: Args) {
 
   // Principal primero, luego la galería, sin duplicados.
   const gallery = Array.isArray(prod.image_urls) ? (prod.image_urls as string[]) : [];
-  const urls = [
+  const candidates = [
     ...new Set([...(prod.image_url ? [prod.image_url] : []), ...gallery]),
-  ].slice(0, cantidad);
-  if (urls.length === 0) return { enviado: false, error: "El producto no tiene imagen." };
+  ];
+  if (candidates.length === 0) return { enviado: false, error: "El producto no tiene imagen." };
+
+  // Guard anti-repetición: la foto de un producto se manda UNA vez por
+  // conversación (el episodio vigente: lo posterior al último cierre, igual
+  // que la ventana de historial del worker). Las fotos restantes de la
+  // galería solo salen con `cantidad` > 1 (el cliente pidió más ángulos) y
+  // nunca se repite una URL ya enviada. `reenviar=true` (petición explícita
+  // del cliente) ignora lo ya enviado en turnos anteriores, pero nunca
+  // repite dentro del mismo turno.
+  const alreadySent = new Set(ctx.sentImageUrls ?? []);
+  if (!reenviar && ctx.conversationId) {
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("closed_at")
+      .eq("id", ctx.conversationId)
+      .maybeSingle();
+    let sentQuery = supabase
+      .from("messages")
+      .select("media_url")
+      .eq("conversation_id", ctx.conversationId)
+      .eq("sender", "bot")
+      .eq("msg_type", "image")
+      .not("media_url", "is", null);
+    if (conv?.closed_at) sentQuery = sentQuery.gt("created_at", conv.closed_at);
+    const { data: sentRows } = await sentQuery;
+    for (const row of sentRows ?? []) alreadySent.add(row.media_url as string);
+  }
+
+  const remaining = candidates.filter((u) => !alreadySent.has(u));
+  if (!reenviar && cantidad === 1 && remaining.length < candidates.length) {
+    return {
+      enviado: false,
+      nota: "foto_ya_enviada",
+      titulo: prod.title,
+      detalle:
+        "Ya enviaste la foto de este producto en esta conversación: NO la repitas, responde con texto. Si el cliente pide ver MÁS fotos o ángulos, llama con cantidad mayor; solo si pide que se la reenvíes, usa reenviar=true.",
+    };
+  }
+  const urls = remaining.slice(0, cantidad);
+  if (urls.length === 0) {
+    return {
+      enviado: false,
+      nota: "fotos_ya_enviadas",
+      titulo: prod.title,
+      detalle:
+        "Ya enviaste todas las fotos de este producto en esta conversación. NO vuelvas a llamar esta herramienta para este producto: responde con texto. Solo si el cliente pide explícitamente que le reenvíes la foto, llama de nuevo con reenviar=true.",
+    };
+  }
 
   if (!ctx.wa || !ctx.customerPhone || !ctx.conversationId) {
-    // Sandbox del editor: no hay a quién enviar. `imagen` se mantiene por
-    // compatibilidad; `imagenes` trae la lista completa.
+    // Sandbox (probador de /admin o dev/chat): no hay a quién enviar. Si hay
+    // conversación real (probador), se persiste el marcador [foto] igual que
+    // en producción para que el guard funcione entre turnos y el historial
+    // que ve Gemini sea el mismo. `imagen` se mantiene por compatibilidad;
+    // `imagenes` trae la lista completa.
+    if (ctx.conversationId) {
+      for (const url of urls) {
+        await supabase.from("messages").insert({
+          tenant_id: ctx.tenant.id,
+          conversation_id: ctx.conversationId,
+          sender: "bot",
+          msg_type: "image",
+          content: `[foto] ${prod.title ?? ""}`.trim(),
+          media_url: url,
+        });
+      }
+    }
+    for (const url of urls) ctx.sentImageUrls?.add(url);
     return {
       enviado: false,
       nota: "sin_destinatario_dev",
@@ -403,6 +507,7 @@ async function enviarImagenProducto(ctx: ToolContext, args: Args) {
         content: `[foto] ${prod.title ?? ""}`.trim(),
         media_url: url,
       });
+      ctx.sentImageUrls?.add(url);
       sent++;
     }
     return { enviado: true, titulo: prod.title, fotos_enviadas: sent };
@@ -424,9 +529,18 @@ async function escalarAHumano(ctx: ToolContext, args: Args) {
         "Primero busca en el catálogo con buscar_productos; escala solo si confirmas que no existe.",
     };
   }
+  // Etiqueta del ticket: la elección de la IA (enum por tenant) con fallback
+  // determinista motivo→etiqueta. null = sin etiqueta (visible para todos).
+  const labelId = resolveLabelId(
+    ctx.ticketLabels ?? [],
+    typeof args.etiqueta === "string" ? args.etiqueta : null,
+    motivo
+  );
+  const etiqueta =
+    ctx.ticketLabels?.find((l) => l.id === labelId)?.name ?? null;
   if (ctx.testMode) {
     // Probador: se marca el resultado en la UI sin crear ticket real.
-    return { escalado: true, motivo, simulado: true };
+    return { escalado: true, motivo, etiqueta_resuelta: etiqueta, simulado: true };
   }
   if (!ctx.conversationId) {
     // Modo dev sin conversación real: solo confirmamos.
@@ -436,8 +550,9 @@ async function escalarAHumano(ctx: ToolContext, args: Args) {
     tenantId: ctx.tenant.id,
     conversationId: ctx.conversationId,
     reason: motivo,
+    labelId,
   });
-  return { escalado: true, motivo };
+  return { escalado: true, motivo, etiqueta };
 }
 
 const HANDLERS: Record<string, (ctx: ToolContext, args: Args) => unknown> = {

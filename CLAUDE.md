@@ -585,7 +585,69 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     escribieron al bot (getUpdates); con todo, manda el mensaje de conexión.
     Verificado: typecheck/build/verify 4/4 y no-op limpio sin envs.
 
+- **Sesión 2026-07-15 — Fotos sin repetir + roles por etiquetas en tickets
+  (rama `feature/photo-dedup-ticket-labels`; typecheck/build/verify 4/4 +
+  28 checks DB + 5/5 Gemini real; NO desplegado aún)**:
+  - **Guard de fotos (global, sin migración)**: el bot mandaba foto en cada
+    mensaje. `enviar_imagen_producto` ahora deduplica server-side contra
+    `messages` (`sender='bot'`, `msg_type='image'`, `media_url`, episodio
+    desde `closed_at`): con `cantidad=1` y el producto ya fotografiado
+    devuelve `foto_ya_enviada` (no envía); `cantidad>1` (cliente pidió
+    ángulos) envía SOLO las fotos que faltan de la galería; galería agotada →
+    `fotos_ya_enviadas`; parámetro nuevo `reenviar=true` para reenvío
+    explícito ("se me borró el chat") — nunca repite dentro del mismo turno
+    (`ctx.sentImageUrls`, patrón calledTools). En sandbox del tester (con
+    conversationId, sin wa) ahora PERSISTE el marcador `[foto]` → el guard
+    funciona entre turnos del probador. Regla del prompt alineada
+    (`lib/ai/prompt.ts`). La frecuencia/estilo por tenant sigue siendo del
+    `system_prompt`.
+  - **Etiquetas de tickets (migración #21)**: `ticket_labels` por tenant
+    (seed: Servicio al cliente, Ventas, Garantías, Reclamos, Logística/Guías;
+    también en `upsertTenant` para altas nuevas), `app_user_labels`
+    (asignación usuario×etiqueta, FKs compuestas anti cross-tenant),
+    `tickets.label_id` (`on delete set null`). Helper SQL
+    `current_user_role()` (SECURITY DEFINER) + policy nueva
+    `app_users_admin_select` (el admin del tenant lista su equipo). RLS:
+    escritura solo admin del tenant (REVOKE + grants por columna, patrón
+    0018). **La IA elige la etiqueta**: `buildToolDeclarations(labels)`
+    agrega a `escalar_a_humano` el param `etiqueta` con enum DINÁMICO por
+    tenant (orden estable → caché implícita intacta; sin etiquetas =
+    declaraciones idénticas a hoy); fallback determinista motivo→etiqueta
+    (`lib/tickets/labels.ts`, `REASON_TO_LABEL`) en `resolveLabelId`;
+    escalados automáticos (fallo_tecnico/video_recibido) resuelven dentro de
+    `escalateToHuman` (worker sin cambios). `generate()` de gemini.ts ahora
+    recibe las declarations por parámetro.
+  - **Dashboard**: `/dashboard/tickets` filtra por rol — agente ve tickets de
+    sus etiquetas + los SIN etiqueta; agente sin etiquetas asignadas ve todo;
+    admin ve todo (query `.or(label_id.is.null,label_id.in.(...))`, el
+    Realtime ya filtraba solo vía router.refresh). Badge de etiqueta en lista
+    y detalle. **Módulo nuevo `/dashboard/labels`** («Etiquetas», solo rol
+    admin + opt-out `modules.labels`): CRUD de etiquetas (renombrar/activar/
+    desactivar/eliminar con confirmación y conteo de tickets abiertos) +
+    matriz de asignación por agente.
+  - **«Pasar a Tickets» desde Conversaciones**: botón en el detalle (visible
+    en `bot_active`/`closed`) para cuando el equipo detecta que puede
+    responder mejor que el bot — `sendToTickets` (RLS, cualquier usuario del
+    tenant) pone `requires_human` + ticket `reason: intervencion_manual` SIN
+    etiqueta (lo ve todo el equipo) y SIN correo (lo escaló el propio
+    equipo); ya escalada = no-op. Mismo ciclo de vida: responder/resolver en
+    Tickets devuelve al bot. Verificado con 4 checks RLS (agente escala la
+    suya, cross-tenant bloqueado 42501/0 filas).
+  - **Verificado**: prueba Gemini real 5/5 (foto 1 vez → turno siguiente sin
+    repetir → "más fotos" manda 3 nuevas con `cantidad=3` → "reenvíame la
+    foto" usa `reenviar=true` → escalada por garantía eligió
+    `etiqueta: "Garantías"` del enum). 28 checks DB (guard fotos con
+    closed_at, mapeo 7 reasons, RLS agente/admin, FK cross-tenant 23503,
+    filtro .or). OJO: el UPDATE de un agente sobre ticket_labels no da error
+    (grant de columna lo permite) pero la policy deja 0 filas — seguro.
+
 ### 🔜 Pendiente
+- **Post-deploy fotos+etiquetas (2026-07-15)**: (1) por WhatsApp real pedir un
+  producto → 1 foto; seguir chateando → no repite; "más fotos" → manda las que
+  faltan; (2) escalar un caso real → ticket con etiqueta visible en
+  /dashboard/tickets; (3) como admin de Elegance abrir `/dashboard/labels`,
+  asignar etiquetas a un agente y confirmar que su bandeja filtra (los sin
+  etiqueta se ven siempre); (4) avisar a Elegance que existe el módulo.
 - **Avisar a Elegance: corregir precio al cliente de la conv `acc0f1e7…`**
   (el repo es público: NO poner aquí su teléfono/nombre; búscalo por el id en
   la DB o en Conversaciones) — el bot le dijo $155.000 por el trípode Q185

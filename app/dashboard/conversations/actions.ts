@@ -22,6 +22,40 @@ export async function closeConversation(fd: FormData): Promise<void> {
   revalidatePath("/dashboard/conversations");
 }
 
+// Pasar la conversación a Tickets a mano: el equipo detectó que puede
+// responder mejor que el bot. Deja la conversación en requires_human (el bot
+// se calla) y crea el ticket SIN etiqueta (lo escaló un humano, lo ve todo el
+// equipo) y sin correo de aviso (el aviso es para el equipo, que es quien lo
+// está haciendo). Desde /dashboard/tickets se responde y al resolver vuelve
+// al bot — el mismo ciclo de un escalado del asesor.
+export async function sendToTickets(fd: FormData): Promise<void> {
+  const { tenant, supabase } = await getDashboardContext();
+  const conversationId = String(fd.get("conversation_id") ?? "");
+  if (!conversationId) return;
+
+  // Si ya está escalada (requires_human/human_active) ya hay ticket: no-op.
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("id, status")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (!conv || conv.status === "requires_human" || conv.status === "human_active") return;
+
+  await supabase
+    .from("conversations")
+    .update({ status: "requires_human" })
+    .eq("id", conversationId);
+  await supabase.from("tickets").insert({
+    tenant_id: tenant.id,
+    conversation_id: conversationId,
+    reason: "intervencion_manual",
+    status: "open",
+  });
+
+  revalidatePath("/dashboard/conversations");
+  revalidatePath("/dashboard/tickets");
+}
+
 // Eliminar una conversación definitivamente. El cascade de la FK borra sus
 // mensajes y tickets; las órdenes ya creadas se conservan (conversation_id
 // queda en null). RLS limita el borrado al propio tenant.

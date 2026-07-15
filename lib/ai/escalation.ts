@@ -6,14 +6,24 @@
 
 import { createAdminClient } from "../supabase/admin";
 import { notifyTicketEscalated } from "../notify/email";
+import { loadActiveLabels, resolveLabelId } from "../tickets/labels";
 
 export async function escalateToHuman(params: {
   tenantId: string;
   conversationId: string;
   reason: string;
+  // Etiqueta ya resuelta por el llamador (escalar_a_humano). undefined =
+  // resolver aquí por el motivo (escalados automáticos del worker); null =
+  // sin etiqueta a propósito.
+  labelId?: string | null;
 }): Promise<{ ticketId: string | null }> {
   const { tenantId, conversationId, reason } = params;
   const supabase = createAdminClient();
+
+  const labelId =
+    params.labelId !== undefined
+      ? params.labelId
+      : resolveLabelId(await loadActiveLabels(tenantId), null, reason);
 
   await supabase
     .from("conversations")
@@ -28,6 +38,7 @@ export async function escalateToHuman(params: {
       conversation_id: conversationId,
       reason,
       status: "open",
+      label_id: labelId,
     })
     .select("id")
     .maybeSingle();

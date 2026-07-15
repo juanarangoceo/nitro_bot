@@ -14,7 +14,8 @@
 
 import { env } from "../env";
 import { buildSystemPrompt } from "./prompt";
-import { toolDeclarations, executeTool, type ToolContext } from "./tools";
+import { buildToolDeclarations, executeTool, type ToolContext } from "./tools";
+import { loadActiveLabels } from "../tickets/labels";
 import type { ShopifyCreds } from "../shopify/client";
 import type { WaCreds } from "../whatsapp/meta";
 import type { Tenant } from "../tenant";
@@ -36,6 +37,7 @@ async function generate(
   model: string,
   systemPrompt: string,
   contents: Content[],
+  declarations: ReturnType<typeof buildToolDeclarations>,
   opts?: { disableTools?: boolean }
 ) {
   const res = await fetch(endpoint(model), {
@@ -47,7 +49,7 @@ async function generate(
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents,
-      tools: [{ functionDeclarations: toolDeclarations }],
+      tools: [{ functionDeclarations: declarations }],
       // mode NONE fuerza una respuesta de texto (cierre del turno) sin quitar
       // las declaraciones: se usa para el intento final tras agotar el loop.
       ...(opts?.disableTools
@@ -133,6 +135,11 @@ export async function runAssistant(params: {
   const systemPrompt = extraSystem
     ? `${buildSystemPrompt(tenant)}\n\n${extraSystem}`
     : buildSystemPrompt(tenant);
+  // Etiquetas activas del tenant: alimentan el enum de `etiqueta` en
+  // escalar_a_humano y la resolución del label del ticket. Orden estable →
+  // declaraciones estables por tenant (la caché implícita no se rompe).
+  const ticketLabels = await loadActiveLabels(tenant.id);
+  const declarations = buildToolDeclarations(ticketLabels.map((l) => l.name));
   const ctx: ToolContext = {
     tenant,
     conversationId,
@@ -141,13 +148,15 @@ export async function runAssistant(params: {
     customerPhone,
     testMode,
     calledTools: new Set<string>(),
+    sentImageUrls: new Set<string>(),
+    ticketLabels,
   };
   const working: Content[] = [...contents];
   const toolTrace: AssistantResult["toolTrace"] = [];
   const usage = emptyUsage();
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const json = await generate(tenant.ai_model, systemPrompt, working);
+    const json = await generate(tenant.ai_model, systemPrompt, working, declarations);
     accumulateUsage(usage, json);
     const parts = (json.candidates?.[0]?.content?.parts ?? []) as GeminiPart[];
     const calls = parts.filter((p) => p.functionCall);
@@ -185,7 +194,9 @@ export async function runAssistant(params: {
   // llamada final con function calling apagado para que el modelo cierre el
   // turno con lo que ya recopiló. Solo si también esto falla queda `exhausted`.
   try {
-    const json = await generate(tenant.ai_model, systemPrompt, working, { disableTools: true });
+    const json = await generate(tenant.ai_model, systemPrompt, working, declarations, {
+      disableTools: true,
+    });
     accumulateUsage(usage, json);
     const parts = (json.candidates?.[0]?.content?.parts ?? []) as GeminiPart[];
     const text = parts
