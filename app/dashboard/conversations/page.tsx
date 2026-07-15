@@ -16,11 +16,13 @@ export default async function ConversationsPage({
   const q = sanitizeSearch((await searchParams).q ?? "");
 
   // Conversaciones del tenant (RLS), las de actividad más reciente primero.
-  // Las de prueba del probador (/admin) no se muestran al cliente (is_test).
+  // Las is_test SÍ se muestran, con badge «Prueba» (números de prueba de la
+  // plataforma: no descuentan mensajes). La única oculta es la sintética del
+  // probador interno de /admin (teléfono +570000000000).
   let query = supabase
     .from("conversations")
-    .select("id, customer_phone, status, last_customer_message_at, created_at")
-    .eq("is_test", false)
+    .select("id, customer_phone, status, is_test, last_customer_message_at, created_at")
+    .neq("customer_phone", "+570000000000")
     .order("last_customer_message_at", { ascending: false, nullsFirst: false })
     .limit(100);
 

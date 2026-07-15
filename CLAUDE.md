@@ -642,6 +642,29 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     filtro .or). OJO: el UPDATE de un agente sobre ticket_labels no da error
     (grant de columna lo permite) pero la policy deja 0 filas — seguro.
 
+- **Sesión 2026-07-15 (bis) — Números de prueba por tenant (migración #22,
+  typecheck/build verdes, 4 checks DB)**: Juan puede probar desde su número
+  real (+573146681896, ya configurado para Elegance dev) sin gastar el plan
+  del cliente.
+  - **`tenants.test_phones` (jsonb)**: lista E.164 editable en /admin («Datos
+    del cliente», coma-separada, se normaliza a +57). El worker marca la
+    conversación `is_test` al entrar el número (y lo REVIERTE si el número
+    sale de la lista) y con `is_test` SALTA `increment_message_counter`
+    completo: no descuenta, no alerta créditos por Telegram y el bot responde
+    aunque el tenant esté al límite. CRM: el contacto de prueba no se upserta.
+  - **Dashboard**: Conversaciones ya NO oculta `is_test` — badge ámbar
+    «Prueba» en lista y detalle + nota "sus mensajes no descuentan de tu
+    plan". La única oculta sigue siendo la sintética del probador
+    (`+570000000000`). Métricas: además de conversaciones, ahora también
+    excluye las ÓRDENES de conversaciones de prueba (filtro
+    `.or(conversation_id.is.null,conversation_id.not.in.(...))` — las órdenes
+    con conversación borrada siguen contando) y el top de productos filtra
+    por esas mismas órdenes (`order_items.order_id`).
+  - **Bonus**: `gemini_usage` del worker marca `source: "whatsapp_test"` para
+    separar el gasto de pruebas en /admin/health.
+  - OJO: una venta cerrada desde el número de prueba SÍ crea la orden real en
+    Shopify (a propósito: prueba e2e) — cancelarla allá; en métricas no cuenta.
+
 ### 🔜 Pendiente
 - **Post-deploy fotos+etiquetas (2026-07-15)**: (1) por WhatsApp real pedir un
   producto → 1 foto; seguir chateando → no repite; "más fotos" → manda las que

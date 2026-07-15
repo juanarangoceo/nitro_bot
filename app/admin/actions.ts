@@ -186,6 +186,17 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
   if (fd.has("voice_id")) {
     update.voice_id = String(fd.get("voice_id") ?? "").trim() || null;
   }
+  // Números de prueba (coma/espacio-separados): sus conversaciones quedan
+  // is_test — no descuentan mensajes y salen como «Prueba» en el dashboard.
+  // Se normalizan a E.164 (+57 por defecto, igual que el worker).
+  if (fd.has("test_phones")) {
+    const phones = String(fd.get("test_phones") ?? "")
+      .split(/[\s,;]+/)
+      .map((p) => p.replace(/[^\d+]/g, ""))
+      .filter(Boolean)
+      .map((p) => (p.startsWith("+") ? p : `+57${p.replace(/^57/, "")}`));
+    update.test_phones = [...new Set(phones)];
+  }
   if (Object.keys(update).length === 0) return;
 
   await admin.from("tenants").update(update).eq("id", tenantId);

@@ -25,6 +25,8 @@ export type Tenant = {
   is_active: boolean;
   voice_replies_enabled: boolean;
   voice_id: string | null;
+  // Números E.164 cuyas conversaciones son de prueba (no descuentan mensajes).
+  test_phones: string[] | null;
 };
 
 export type TenantSecrets = {
