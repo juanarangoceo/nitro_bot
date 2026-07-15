@@ -5,6 +5,7 @@
 
 import { createAdminClient } from "../supabase/admin";
 import { encryptSecret } from "../crypto";
+import { DEFAULT_TICKET_LABELS } from "../tickets/labels";
 
 export type UpsertTenantInput = {
   slug: string;
@@ -66,6 +67,16 @@ export async function upsertTenant(
     .from("tenant_secrets")
     .upsert(secretsRow, { onConflict: "tenant_id" });
   if (sErr) throw new Error(`Upsert secretos falló: ${sErr.message}`);
+
+  // Etiquetas de tickets por defecto (idempotente: ignora las que ya existan;
+  // en un re-alta puede re-crear una default que el admin borró — inocuo).
+  const { error: lErr } = await supabase
+    .from("ticket_labels")
+    .upsert(
+      DEFAULT_TICKET_LABELS.map((name) => ({ tenant_id: tenant.id, name })),
+      { onConflict: "tenant_id,name", ignoreDuplicates: true }
+    );
+  if (lErr) throw new Error(`Seed de etiquetas falló: ${lErr.message}`);
 
   return tenant;
 }

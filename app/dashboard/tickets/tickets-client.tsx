@@ -13,6 +13,7 @@ export type TicketRow = {
   conversation_id: string;
   customer_phone: string;
   status: string;
+  label_name: string | null;
 };
 
 type Message = {
@@ -152,6 +153,11 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
           >
             <p className="text-sm font-medium text-neutral-900">{t.customer_phone}</p>
             <p className="text-xs text-neutral-500">{t.reason ?? "escalado"}</p>
+            {t.label_name && (
+              <span className="mt-1 inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600">
+                {t.label_name}
+              </span>
+            )}
             <p className="mt-1 text-[11px] text-neutral-400">
               {new Date(t.created_at).toLocaleString("es-CO")}
             </p>
@@ -165,7 +171,10 @@ export function TicketsClient({ initialTickets }: { initialTickets: TicketRow[] 
           <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-neutral-900">{selected.customer_phone}</p>
-              <p className="text-xs text-neutral-500">Estado: {selected.status}</p>
+              <p className="text-xs text-neutral-500">
+                Estado: {selected.status}
+                {selected.label_name && ` · ${selected.label_name}`}
+              </p>
             </div>
             <form action={resolveTicket}>
               <input type="hidden" name="ticket_id" value={selected.id} />

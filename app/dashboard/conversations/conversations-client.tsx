@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { MessageBody } from "../message-body";
-import { closeConversation, deleteConversation } from "./actions";
+import { closeConversation, deleteConversation, sendToTickets } from "./actions";
 
 export type ConversationRow = {
   id: string;
@@ -185,6 +185,28 @@ export function ConversationsClient({
             </p>
             <div className="flex items-center gap-2">
               <StatusBadge status={selected.status} />
+              {(selected.status === "bot_active" || selected.status === "closed") && (
+                <form
+                  action={sendToTickets}
+                  onSubmit={(e) => {
+                    if (
+                      !confirm(
+                        "¿Pasar esta conversación a Tickets? El asesor deja de responder y tu equipo la atiende desde Tickets; al resolverla vuelve al bot."
+                      )
+                    ) {
+                      e.preventDefault();
+                    }
+                  }}
+                >
+                  <input type="hidden" name="conversation_id" value={selected.id} />
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-neutral-800"
+                  >
+                    Pasar a Tickets
+                  </button>
+                </form>
+              )}
               {selected.status !== "closed" && (
                 <form
                   action={closeConversation}
