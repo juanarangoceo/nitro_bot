@@ -255,6 +255,11 @@ export async function processInboundMessage(params: {
   const phone = toE164(message.from);
   const contactName = value.contacts?.[0]?.profile?.name ?? null;
 
+  // ¿Número de prueba del tenant? Su conversación se marca is_test: no
+  // descuenta del contador y el dashboard la muestra como «Prueba». Si el
+  // número sale de la lista en /admin, la conversación vuelve a ser normal.
+  const isTest = Array.isArray(tenant.test_phones) && tenant.test_phones.includes(phone);
+
   // 1) Conversación: obtener-o-crear sin pisar el estado existente (no des-escalar).
   //    Excepción: una conversación CERRADA se reactiva a bot_active cuando el
   //    cliente vuelve a escribir. closed_at se conserva como corte de contexto:
@@ -262,7 +267,7 @@ export async function processInboundMessage(params: {
   //    histórico no se borra; métricas y CRM intactos).
   let { data: conv } = await supabase
     .from("conversations")
-    .select("id, status, closed_at")
+    .select("id, status, closed_at, is_test")
     .eq("tenant_id", tenant.id)
     .eq("customer_phone", phone)
     .maybeSingle();
@@ -275,11 +280,12 @@ export async function processInboundMessage(params: {
           tenant_id: tenant.id,
           customer_phone: phone,
           status: "bot_active",
+          is_test: isTest,
           last_customer_message_at: new Date().toISOString(),
         },
         { onConflict: "tenant_id,customer_phone", ignoreDuplicates: false }
       )
-      .select("id, status, closed_at")
+      .select("id, status, closed_at, is_test")
       .single();
     if (error || !inserted) {
       console.error(`[worker] no se pudo crear conversación:`, error);
@@ -294,13 +300,17 @@ export async function processInboundMessage(params: {
     if (conv.status === "closed") {
       update.status = "bot_active"; // reactivación; closed_at queda como corte
     }
+    if ((conv.is_test ?? false) !== isTest) {
+      update.is_test = isTest; // el número entró o salió de la lista de prueba
+    }
     await supabase.from("conversations").update(update).eq("id", conv.id);
   }
   const conversationId = conv.id;
   const historyCutoff = conv.closed_at; // null si nunca se cerró
 
-  // Mantén el CRM mínimo al día (nombre del contacto). Best-effort.
-  if (contactName) {
+  // Mantén el CRM mínimo al día (nombre del contacto). Best-effort. Los
+  // números de prueba no entran al CRM del cliente.
+  if (contactName && !isTest) {
     await supabase
       .from("customers")
       .upsert(
@@ -385,14 +395,18 @@ export async function processInboundMessage(params: {
   }
 
   // 5) Contador de consumo atómico + corte al pasar el límite.
-  const { data: counter, error: counterError } = await supabase
-    .rpc("increment_message_counter", { p_tenant_id: tenant.id })
-    .maybeSingle<{
-      current_count: number;
-      message_limit: number;
-      over_limit: boolean;
-      at_80_percent: boolean;
-    }>();
+  //    Conversaciones de prueba: NO descuentan (ni alertan créditos) y el bot
+  //    responde aunque el tenant esté al límite — para eso son las pruebas.
+  const { data: counter, error: counterError } = isTest
+    ? { data: null, error: null }
+    : await supabase
+        .rpc("increment_message_counter", { p_tenant_id: tenant.id })
+        .maybeSingle<{
+          current_count: number;
+          message_limit: number;
+          over_limit: boolean;
+          at_80_percent: boolean;
+        }>();
   if (counterError) {
     console.error(`[worker] increment_message_counter falló:`, counterError.message);
   }
@@ -547,7 +561,7 @@ export async function processInboundMessage(params: {
       severity: "info",
       tenantId: tenant.id,
       conversationId,
-      detail: { ...result.usage, source: "whatsapp", voice: voiceTurn },
+      detail: { ...result.usage, source: isTest ? "whatsapp_test" : "whatsapp", voice: voiceTurn },
     });
   }
 

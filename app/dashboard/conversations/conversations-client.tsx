@@ -11,6 +11,7 @@ export type ConversationRow = {
   customer_phone: string;
   customer_name: string | null;
   status: string;
+  is_test: boolean;
   last_customer_message_at: string | null;
   created_at: string;
 };
@@ -160,7 +161,14 @@ export function ConversationsClient({
               <p className="truncate text-sm font-medium text-neutral-900">
                 {c.customer_name ?? c.customer_phone}
               </p>
-              <StatusBadge status={c.status} />
+              <span className="flex items-center gap-1">
+                {c.is_test && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                    Prueba
+                  </span>
+                )}
+                <StatusBadge status={c.status} />
+              </span>
             </div>
             {c.customer_name && (
               <p className="text-xs text-neutral-500">{c.customer_phone}</p>
@@ -178,12 +186,24 @@ export function ConversationsClient({
       {selected ? (
         <div className="flex h-[calc(100dvh-11rem)] min-h-[480px] flex-col rounded-2xl border border-neutral-200 bg-white">
           <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
-            <p className="text-sm font-medium text-neutral-900">
-              {selected.customer_name
-                ? `${selected.customer_name} · ${selected.customer_phone}`
-                : selected.customer_phone}
-            </p>
+            <div>
+              <p className="text-sm font-medium text-neutral-900">
+                {selected.customer_name
+                  ? `${selected.customer_name} · ${selected.customer_phone}`
+                  : selected.customer_phone}
+              </p>
+              {selected.is_test && (
+                <p className="text-xs text-amber-700">
+                  Conversación de prueba: sus mensajes no descuentan de tu plan.
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-2">
+              {selected.is_test && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                  Prueba
+                </span>
+              )}
               <StatusBadge status={selected.status} />
               {(selected.status === "bot_active" || selected.status === "closed") && (
                 <form

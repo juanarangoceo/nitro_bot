@@ -33,7 +33,25 @@ export default async function MetricsPage({
   const period: Period = sp.period === "week" ? "week" : "month";
   const since = periodStart(period);
 
-  // Las conversaciones de prueba del probador (/admin) no cuentan (is_test).
+  // Las conversaciones de prueba no cuentan (is_test: probador de /admin y
+  // números de prueba de la plataforma). Sus órdenes tampoco: se excluyen por
+  // conversation_id (las órdenes con conversación borrada — null — sí cuentan).
+  const { data: testConvs } = await supabase
+    .from("conversations")
+    .select("id")
+    .eq("is_test", true);
+  const testConvIds = (testConvs ?? []).map((c) => c.id);
+
+  let ordersQuery = supabase
+    .from("orders")
+    .select("id, total, created_at, conversation_id")
+    .gte("created_at", since);
+  if (testConvIds.length > 0) {
+    ordersQuery = ordersQuery.or(
+      `conversation_id.is.null,conversation_id.not.in.(${testConvIds.join(",")})`
+    );
+  }
+
   const [conversations, botActive, requiresHuman, ordersInPeriod, customers, items] =
     await Promise.all([
       supabase
@@ -50,15 +68,16 @@ export default async function MetricsPage({
         .select("id", { count: "exact", head: true })
         .eq("status", "requires_human")
         .eq("is_test", false),
-      supabase.from("orders").select("total, created_at").gte("created_at", since),
+      ordersQuery,
       supabase.from("customers").select("id", { count: "exact", head: true }),
       supabase
         .from("order_items")
-        .select("shopify_product_id, title, quantity, unit_price")
+        .select("order_id, shopify_product_id, title, quantity, unit_price")
         .gte("created_at", since),
     ]);
 
   const orders = ordersInPeriod.data ?? [];
+  const orderIds = new Set(orders.map((o) => o.id));
   const revenue = orders.reduce((sum, o) => sum + Number(o.total ?? 0), 0);
   const fmtCOP = (n: number) =>
     n.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -69,6 +88,9 @@ export default async function MetricsPage({
     { title: string; units: number; revenue: number }
   >();
   for (const it of items.data ?? []) {
+    // Ítems de órdenes de prueba fuera del top de productos (mismo criterio
+    // que la venta total: solo órdenes del período ya filtradas).
+    if (!orderIds.has(it.order_id)) continue;
     const key = it.shopify_product_id ?? it.title ?? "—";
     const prev = byProduct.get(key) ?? { title: it.title ?? "—", units: 0, revenue: 0 };
     prev.units += Number(it.quantity ?? 0);

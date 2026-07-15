@@ -56,7 +56,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price, test_phones"
     )
     .eq("id", id)
     .maybeSingle();
@@ -240,6 +240,20 @@ export default async function ClientDetailPage({
                 name="voice_id"
                 defaultValue={t.voice_id ?? ""}
                 placeholder="voice_..."
+                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">
+                Números de prueba (separados por coma): sus conversaciones NO
+                descuentan mensajes y salen como «Prueba» en el dashboard
+              </span>
+              <input
+                name="test_phones"
+                defaultValue={
+                  Array.isArray(t.test_phones) ? (t.test_phones as string[]).join(", ") : ""
+                }
+                placeholder="+573146681896"
                 className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
               />
             </label>
