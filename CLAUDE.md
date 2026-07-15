@@ -586,8 +586,9 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     Verificado: typecheck/build/verify 4/4 y no-op limpio sin envs.
 
 - **Sesión 2026-07-15 — Fotos sin repetir + roles por etiquetas en tickets
-  (rama `feature/photo-dedup-ticket-labels`; typecheck/build/verify 4/4 +
-  28 checks DB + 5/5 Gemini real; NO desplegado aún)**:
+  (DESPLEGADO en producción: merge `4ab4498`, migración #21 aplicada, health
+  OK `db:up`, smoke de rutas verde; typecheck/build/verify 4/4 + 32 checks
+  DB + 5/5 Gemini real)**:
   - **Guard de fotos (global, sin migración)**: el bot mandaba foto en cada
     mensaje. `enviar_imagen_producto` ahora deduplica server-side contra
     `messages` (`sender='bot'`, `msg_type='image'`, `media_url`, episodio
