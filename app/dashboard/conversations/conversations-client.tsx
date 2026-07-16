@@ -19,6 +19,7 @@ export type ConversationRow = {
 type Message = {
   id: string;
   sender: string;
+  sent_by: string | null;
   content: string | null;
   msg_type: string;
   media_path: string | null;
@@ -40,8 +41,11 @@ function StatusBadge({ status }: { status: string }) {
 
 export function ConversationsClient({
   initialConversations,
+  team,
 }: {
   initialConversations: ConversationRow[];
+  // id → nombre (o correo) del equipo, para "quién respondió" en cada burbuja.
+  team: Record<string, string>;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<ConversationRow | null>(
@@ -91,7 +95,7 @@ export function ConversationsClient({
     let active = true;
     supabase
       .from("messages")
-      .select("id, sender, content, msg_type, media_path, media_url, created_at")
+      .select("id, sender, sent_by, content, msg_type, media_path, media_url, created_at")
       .eq("conversation_id", selected.id)
       .order("created_at", { ascending: true })
       .then(({ data }) => {
@@ -283,7 +287,7 @@ export function ConversationsClient({
               >
                 <MessageBody m={m} />
                 <span className="mt-1 block text-[10px] opacity-60">
-                  {m.sender} ·{" "}
+                  {(m.sender === "agent" && m.sent_by && team[m.sent_by]) || m.sender} ·{" "}
                   {new Date(m.created_at).toLocaleTimeString("es-CO", {
                     hour: "numeric",
                     minute: "2-digit",

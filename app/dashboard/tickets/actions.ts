@@ -20,7 +20,7 @@ export async function replyToTicket(
   _prev: ReplyState,
   formData: FormData
 ): Promise<ReplyState> {
-  const { tenant, supabase } = await getDashboardContext();
+  const { tenant, supabase, user } = await getDashboardContext();
   const conversationId = String(formData.get("conversation_id") ?? "");
   const text = String(formData.get("text") ?? "").trim();
   if (!conversationId || !text) return { ok: false, error: "Falta el mensaje." };
@@ -57,6 +57,8 @@ export async function replyToTicket(
       sender: "agent",
       msg_type: "text",
       content: text,
+      // Autoría server-side (jamás del form): quién del equipo respondió.
+      sent_by: user.id,
     });
     await supabase
       .from("conversations")
@@ -79,7 +81,7 @@ export async function sendMediaFromAgent(
   _prev: ReplyState,
   formData: FormData
 ): Promise<ReplyState> {
-  const { tenant, supabase } = await getDashboardContext();
+  const { tenant, supabase, user } = await getDashboardContext();
   const conversationId = String(formData.get("conversation_id") ?? "");
   const file = formData.get("file");
   if (!conversationId) return { ok: false, error: "Falta la conversación." };
@@ -145,6 +147,7 @@ export async function sendMediaFromAgent(
       content: kind === "image" ? "[imagen]" : "[nota de voz]",
       media_path: mediaPath,
       media_mime: mime,
+      sent_by: user.id,
     });
     await supabase
       .from("conversations")
@@ -160,14 +163,18 @@ export async function sendMediaFromAgent(
 
 // Resuelve un ticket y devuelve la conversación al bot.
 export async function resolveTicket(formData: FormData): Promise<void> {
-  const { supabase } = await getDashboardContext();
+  const { supabase, user } = await getDashboardContext();
   const ticketId = String(formData.get("ticket_id") ?? "");
   const conversationId = String(formData.get("conversation_id") ?? "");
   if (!ticketId) return;
 
   await supabase
     .from("tickets")
-    .update({ status: "resolved", resolved_at: new Date().toISOString() })
+    .update({
+      status: "resolved",
+      resolved_at: new Date().toISOString(),
+      resolved_by: user.id,
+    })
     .eq("id", ticketId);
   if (conversationId) {
     await supabase

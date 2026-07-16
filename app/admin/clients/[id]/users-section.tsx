@@ -9,14 +9,17 @@ import {
   createDashboardUser,
   deleteDashboardUser,
   resetUserPassword,
+  updateUserName,
   type CreateUserState,
   type DeleteUserState,
   type ResetPasswordState,
+  type UpdateUserNameState,
 } from "../../actions";
 
 export type TenantUser = {
   id: string;
   email: string | null;
+  name: string | null;
   role: string;
   lastSignInAt: string | null;
 };
@@ -93,6 +96,37 @@ function DeleteButton({ user }: { user: TenantUser }) {
   );
 }
 
+const NAME_INITIAL: UpdateUserNameState = { ok: false, error: null };
+
+// Nombre visible del usuario: identifica quién respondió cada mensaje en el
+// dashboard del cliente. Vacío = se muestra el correo.
+function NameForm({ user }: { user: TenantUser }) {
+  const [state, formAction, pending] = useActionState(updateUserName, NAME_INITIAL);
+
+  return (
+    <form action={formAction} className="mt-1 flex items-center gap-2">
+      <input type="hidden" name="user_id" value={user.id} />
+      <input
+        type="text"
+        name="name"
+        defaultValue={user.name ?? ""}
+        placeholder="Nombre visible"
+        maxLength={80}
+        className="w-44 rounded-lg border border-neutral-300 px-2 py-1 text-xs"
+      />
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-lg border border-neutral-300 px-2 py-1 text-[11px] text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+      >
+        {pending ? "Guardando…" : "Guardar"}
+      </button>
+      {state.ok && <span className="text-[11px] text-emerald-600">✓</span>}
+      {state.error && <span className="text-[11px] text-red-600">{state.error}</span>}
+    </form>
+  );
+}
+
 const CREATE_INITIAL: CreateUserState = {
   ok: false,
   error: null,
@@ -114,6 +148,13 @@ function CreateUserForm({ tenantId }: { tenantId: string }) {
           required
           placeholder="correo@cliente.com"
           className="min-w-52 flex-1 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm"
+        />
+        <input
+          type="text"
+          name="name"
+          placeholder="Nombre (opcional)"
+          maxLength={80}
+          className="min-w-40 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm"
         />
         <select
           name="role"
@@ -160,11 +201,15 @@ export function UsersSection({ tenantId, users }: { tenantId: string; users: Ten
               className="flex items-center justify-between gap-3 border-b border-neutral-100 pb-3 last:border-0 last:pb-0"
             >
               <div>
-                <p className="text-sm text-neutral-800">{u.email ?? "—"}</p>
+                <p className="text-sm text-neutral-800">
+                  {u.name ? `${u.name} · ` : ""}
+                  {u.email ?? "—"}
+                </p>
                 <p className="text-[11px] text-neutral-400">
                   rol: {u.role} · último ingreso:{" "}
                   {u.lastSignInAt ? new Date(u.lastSignInAt).toLocaleString("es-CO") : "nunca"}
                 </p>
+                <NameForm user={u} />
               </div>
               <div className="flex items-start gap-2">
                 <ResetButton user={u} />

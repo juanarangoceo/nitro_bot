@@ -26,7 +26,18 @@ export default async function TicketsPage() {
   if (role === "agent" && labelIds.length > 0) {
     query = query.or(`label_id.is.null,label_id.in.(${labelIds.join(",")})`);
   }
-  const { data } = await query;
+
+  // Equipo del tenant (RLS: app_users_team_select) para mostrar quién
+  // respondió cada mensaje de agente: id → nombre (o correo).
+  const [{ data }, { data: teamRows }] = await Promise.all([
+    query,
+    supabase.from("app_users").select("id, name, email"),
+  ]);
+  const team: Record<string, string> = {};
+  for (const u of teamRows ?? []) {
+    const label = u.name ?? u.email;
+    if (label) team[u.id] = label;
+  }
 
   // Supabase devuelve la relación embebida; la normalizamos a objeto plano.
   const tickets: TicketRow[] = (data ?? []).map((t) => {
@@ -52,7 +63,7 @@ export default async function TicketsPage() {
         </p>
       </header>
 
-      <TicketsClient initialTickets={tickets} />
+      <TicketsClient initialTickets={tickets} team={team} />
     </div>
   );
 }

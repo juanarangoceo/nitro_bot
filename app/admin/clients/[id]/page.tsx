@@ -84,7 +84,7 @@ export default async function ClientDetailPage({
   // Usuarios del dashboard del tenant + último ingreso (Auth Admin API).
   const { data: appUsers } = await admin
     .from("app_users")
-    .select("id, email, role")
+    .select("id, email, name, role")
     .eq("tenant_id", id)
     .order("created_at", { ascending: true });
   const users: TenantUser[] = await Promise.all(
@@ -93,6 +93,7 @@ export default async function ClientDetailPage({
       return {
         id: u.id,
         email: u.email,
+        name: u.name,
         role: u.role,
         lastSignInAt: data?.user?.last_sign_in_at ?? null,
       };
