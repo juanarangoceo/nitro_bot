@@ -2,7 +2,7 @@
 // administra las etiquetas de los tickets (el bot clasifica cada escalado con
 // una) y qué etiquetas atiende cada usuario del equipo. Un agente ve en
 // Tickets solo los de sus etiquetas + los tickets sin etiqueta; sin etiquetas
-// asignadas ve todo.
+// asignadas ve únicamente los sin etiqueta (solo el admin ve todo; RLS 0024).
 
 import { redirect } from "next/navigation";
 import { getDashboardContext } from "@/lib/dashboard/context";

@@ -4,9 +4,10 @@ import { TicketsClient, type TicketRow } from "./tickets-client";
 export default async function TicketsPage() {
   const { supabase, user, role } = await getDashboardContext();
 
-  // Etiquetas del agente: filtra su bandeja. Un agente SIN etiquetas asignadas
-  // ve todo (opt-in al filtro); el admin siempre ve todo. Los tickets sin
-  // etiqueta son visibles para todos (nadie queda sin atender).
+  // Etiquetas del agente: filtran su bandeja. Solo el admin ve todo; un agente
+  // ve los tickets de sus etiquetas + los «Sin etiqueta» (visibles para todo
+  // el equipo). Sin etiquetas asignadas ve únicamente los sin etiqueta. La
+  // misma regla la impone RLS (0024) — este filtro es defensa en profundidad.
   let labelIds: string[] = [];
   if (role === "agent") {
     const { data } = await supabase
@@ -23,8 +24,11 @@ export default async function TicketsPage() {
     )
     .eq("status", "open")
     .order("created_at", { ascending: false });
-  if (role === "agent" && labelIds.length > 0) {
-    query = query.or(`label_id.is.null,label_id.in.(${labelIds.join(",")})`);
+  if (role === "agent") {
+    query =
+      labelIds.length > 0
+        ? query.or(`label_id.is.null,label_id.in.(${labelIds.join(",")})`)
+        : query.is("label_id", null);
   }
 
   // Equipo del tenant (RLS: app_users_team_select) para mostrar quién
