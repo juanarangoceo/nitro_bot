@@ -28,7 +28,7 @@ export default async function LabelsPage() {
         .order("name", { ascending: true }),
       supabase
         .from("app_users")
-        .select("id, email, role")
+        .select("id, email, name, role")
         .order("created_at", { ascending: true }),
       supabase.from("app_user_labels").select("user_id, label_id"),
       supabase.from("tickets").select("label_id").eq("status", "open"),
@@ -57,6 +57,7 @@ export default async function LabelsPage() {
   const team: TeamUser[] = (users ?? []).map((u) => ({
     id: u.id,
     email: u.email,
+    name: u.name,
     role: u.role,
     label_ids: labelsByUser.get(u.id) ?? [],
   }));
@@ -103,7 +104,7 @@ export default async function LabelsPage() {
         ))}
         {admins.length > 0 && (
           <p className="text-xs text-neutral-500">
-            Administradores ({admins.map((a) => a.email ?? a.id).join(", ")}): ven
+            Administradores ({admins.map((a) => a.name ?? a.email ?? a.id).join(", ")}): ven
             todos los tickets, no necesitan etiquetas.
           </p>
         )}

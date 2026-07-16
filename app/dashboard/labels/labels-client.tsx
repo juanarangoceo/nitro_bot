@@ -22,6 +22,7 @@ export type LabelRow = {
 export type TeamUser = {
   id: string;
   email: string | null;
+  name: string | null;
   role: string;
   label_ids: string[];
 };
@@ -136,7 +137,12 @@ export function UserLabelsForm({
     >
       <input type="hidden" name="user_id" value={user.id} />
       <div className="min-w-48">
-        <p className="text-sm font-medium text-neutral-900">{user.email ?? user.id}</p>
+        <p className="text-sm font-medium text-neutral-900">
+          {user.name ?? user.email ?? user.id}
+          {user.name && user.email && (
+            <span className="ml-1 font-normal text-neutral-400">· {user.email}</span>
+          )}
+        </p>
         <p className="text-xs text-neutral-500">
           Sin etiquetas seleccionadas ve todos los tickets.
         </p>

@@ -553,6 +553,7 @@ export async function createDashboardUser(
   const tenantId = str(fd, "tenant_id");
   const email = str(fd, "email").toLowerCase();
   const role = str(fd, "role");
+  const name = str(fd, "name").slice(0, 80) || null;
   if (!tenantId) return fail("Falta el cliente.");
   if (!EMAIL_RE.test(email)) return fail("El correo no es válido.");
   if (role !== "agent" && role !== "admin") return fail("Rol inválido.");
@@ -587,7 +588,7 @@ export async function createDashboardUser(
 
   const { error: insertError } = await admin
     .from("app_users")
-    .insert({ id: created.user.id, tenant_id: tenantId, email, role });
+    .insert({ id: created.user.id, tenant_id: tenantId, email, role, name });
   if (insertError) {
     // Rollback: sin fila en app_users la cuenta de Auth quedaría huérfana.
     await admin.auth.admin.deleteUser(created.user.id);
@@ -598,10 +599,45 @@ export async function createDashboardUser(
     adminId,
     action: "create_user",
     tenantId,
-    detail: { user_email: email, role },
+    detail: { user_email: email, role, name },
   });
   revalidatePath(`/admin/clients/${tenantId}`);
   return { ok: true, error: null, tempPassword, email };
+}
+
+// ── Nombre del usuario del dashboard ────────────────────────────────────────
+// El nombre identifica quién respondió cada mensaje ("Respondida por {name}").
+// Solo se gestiona desde /admin; vacío = se muestra el correo.
+export type UpdateUserNameState = { ok: boolean; error: string | null };
+
+export async function updateUserName(
+  _prev: UpdateUserNameState,
+  fd: FormData
+): Promise<UpdateUserNameState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const userId = String(fd.get("user_id") ?? "");
+  const name = str(fd, "name").slice(0, 80) || null;
+  if (!userId) return { ok: false, error: "Falta el usuario." };
+
+  // Solo usuarios de dashboard (app_users); nunca cuentas de plataforma.
+  const { data: appUser } = await admin
+    .from("app_users")
+    .select("id, tenant_id, email")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!appUser) return { ok: false, error: "Usuario no encontrado." };
+
+  const { error } = await admin.from("app_users").update({ name }).eq("id", userId);
+  if (error) return { ok: false, error: `No se pudo guardar: ${error.message}` };
+
+  await logAudit(admin, {
+    adminId,
+    action: "update_user_name",
+    tenantId: appUser.tenant_id,
+    detail: { user_email: appUser.email, name },
+  });
+  revalidatePath(`/admin/clients/${appUser.tenant_id}`);
+  return { ok: true, error: null };
 }
 
 // ── Eliminar usuario del dashboard ──────────────────────────────────────────

@@ -9,6 +9,7 @@ export type SeedUserInput = {
   email: string;
   password: string;
   role?: "admin" | "agent";
+  name?: string;
 };
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -58,7 +59,14 @@ export async function seedDashboardUser(
   const { error: aErr } = await supabase
     .from("app_users")
     .upsert(
-      { id: userId, tenant_id: tenant.id, email: input.email, role },
+      {
+        id: userId,
+        tenant_id: tenant.id,
+        email: input.email,
+        role,
+        // Solo si viene: el re-seed no debe borrar un nombre ya configurado.
+        ...(input.name ? { name: input.name } : {}),
+      },
       { onConflict: "id" }
     );
   if (aErr) throw new Error(`Upsert app_users falló: ${aErr.message}`);

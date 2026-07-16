@@ -65,6 +65,15 @@ export default async function ConversationsPage({
     customer_name: nameByPhone.get(c.customer_phone) ?? null,
   }));
 
+  // Equipo del tenant (RLS: app_users_team_select) para mostrar quién
+  // respondió cada mensaje de agente: id → nombre (o correo).
+  const { data: teamRows } = await supabase.from("app_users").select("id, name, email");
+  const team: Record<string, string> = {};
+  for (const u of teamRows ?? []) {
+    const label = u.name ?? u.email;
+    if (label) team[u.id] = label;
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <header>
@@ -105,7 +114,7 @@ export default async function ConversationsPage({
         )}
       </form>
 
-      <ConversationsClient initialConversations={conversations} />
+      <ConversationsClient initialConversations={conversations} team={team} />
     </div>
   );
 }
