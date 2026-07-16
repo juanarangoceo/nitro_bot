@@ -161,11 +161,15 @@ export function TicketsClient({
           >
             <p className="text-sm font-medium text-neutral-900">{t.customer_phone}</p>
             <p className="text-xs text-neutral-500">{t.reason ?? "escalado"}</p>
-            {t.label_name && (
-              <span className="mt-1 inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600">
-                {t.label_name}
-              </span>
-            )}
+            <span
+              className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                t.label_name
+                  ? "bg-neutral-100 text-neutral-600"
+                  : "bg-neutral-50 text-neutral-400"
+              }`}
+            >
+              {t.label_name ?? "Sin etiqueta"}
+            </span>
             <p className="mt-1 text-[11px] text-neutral-400">
               {new Date(t.created_at).toLocaleString("es-CO")}
             </p>
@@ -180,8 +184,7 @@ export function TicketsClient({
             <div>
               <p className="text-sm font-medium text-neutral-900">{selected.customer_phone}</p>
               <p className="text-xs text-neutral-500">
-                Estado: {selected.status}
-                {selected.label_name && ` · ${selected.label_name}`}
+                Estado: {selected.status} · {selected.label_name ?? "Sin etiqueta"}
               </p>
             </div>
             <form action={resolveTicket}>
