@@ -751,6 +751,15 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   **REGLA para Juan: «Marcar pagada» en una renovación SOLO cuando el cliente
   pagó de verdad — resetea el ciclo.** Verificado 5/5 vencimiento + 13/13
   regresión.
+  - **(quater) Vencimiento por factura (migración #27, merge 24c7a9a)**:
+    `invoices.due_date` — renovación nace con el corte del tenant (etiqueta
+    «próximo ciclo» mientras esté pendiente), adicional con emisión+15 días;
+    visible en /admin y en el Plan del cliente («paga antes del …»). Se
+    ELIMINÓ el selector manual «Estado del pago» (lo derivan las facturas).
+    Backfill Elegance: factura histórica PAGADA del plan del 12-jul
+    (cycle_start anclado al 12-jun para el unique index) + vencimientos
+    (adicional 01-ago, renovación 12-ago). NO existe creación manual de
+    facturas: todo es automático.
   - **(ter) Contador consciente del adicional (merge 3700558)**: Juan repitió
     el «Marcar pagada» porque el contador mostraba «5.004/5.000 sin créditos
     🚫» estando en la fase VÁLIDA del adicional. Fix: lista de /admin, detalle
