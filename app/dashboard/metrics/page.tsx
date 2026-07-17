@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getDashboardContext } from "@/lib/dashboard/context";
+import { bogotaDayStart, bogotaDayEnd } from "@/lib/dates";
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
@@ -26,12 +27,19 @@ function periodStart(period: Period): string {
 export default async function MetricsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { supabase, tenant } = await getDashboardContext();
   const sp = await searchParams;
   const period: Period = sp.period === "week" ? "week" : "month";
-  const since = periodStart(period);
+
+  // Rango personalizado desde/hasta (días en hora de Colombia). Si viene un
+  // rango válido, prevalece sobre el toggle Semana/Mes. `until` es exclusivo.
+  const fromDay = sp.from && bogotaDayStart(sp.from) ? sp.from : "";
+  const toDay = sp.to && bogotaDayEnd(sp.to) ? sp.to : "";
+  const hasRange = Boolean(fromDay || toDay);
+  const since = fromDay ? bogotaDayStart(fromDay)! : periodStart(period);
+  const until = toDay ? bogotaDayEnd(toDay)! : null;
 
   // Las conversaciones de prueba no cuentan (is_test: probador de /admin y
   // números de prueba de la plataforma). Sus órdenes tampoco: se excluyen por
@@ -46,6 +54,7 @@ export default async function MetricsPage({
     .from("orders")
     .select("id, total, created_at, conversation_id")
     .gte("created_at", since);
+  if (until) ordersQuery = ordersQuery.lt("created_at", until);
   if (testConvIds.length > 0) {
     ordersQuery = ordersQuery.or(
       `conversation_id.is.null,conversation_id.not.in.(${testConvIds.join(",")})`
@@ -70,10 +79,14 @@ export default async function MetricsPage({
         .eq("is_test", false),
       ordersQuery,
       supabase.from("customers").select("id", { count: "exact", head: true }),
-      supabase
-        .from("order_items")
-        .select("order_id, shopify_product_id, title, quantity, unit_price")
-        .gte("created_at", since),
+      (() => {
+        let q = supabase
+          .from("order_items")
+          .select("order_id, shopify_product_id, title, quantity, unit_price")
+          .gte("created_at", since);
+        if (until) q = q.lt("created_at", until);
+        return q;
+      })(),
     ]);
 
   const orders = ordersInPeriod.data ?? [];
@@ -101,7 +114,18 @@ export default async function MetricsPage({
     .sort((a, b) => b.units - a.units)
     .slice(0, 10);
 
-  const periodLabel = period === "week" ? "última semana" : "este mes";
+  const fmtDay = (d: string) =>
+    new Date(`${d}T12:00:00-05:00`).toLocaleDateString("es-CO", {
+      day: "numeric",
+      month: "short",
+    });
+  const periodLabel = hasRange
+    ? `${fromDay ? `desde ${fmtDay(fromDay)}` : ""}${fromDay && toDay ? " " : ""}${
+        toDay ? `hasta ${fmtDay(toDay)}` : ""
+      }`
+    : period === "week"
+      ? "última semana"
+      : "este mes";
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -116,7 +140,7 @@ export default async function MetricsPage({
               key={p}
               href={`/dashboard/metrics?period=${p}`}
               className={`rounded-md px-3 py-1.5 ${
-                period === p
+                period === p && !hasRange
                   ? "bg-neutral-900 text-white"
                   : "text-neutral-600 hover:bg-neutral-100"
               }`}
@@ -126,6 +150,47 @@ export default async function MetricsPage({
           ))}
         </div>
       </header>
+
+      {/* Rango personalizado (días en hora de Colombia). Aplica a órdenes,
+          ventas y productos más vendidos; prevalece sobre Semana/Mes. */}
+      <form
+        method="get"
+        action="/dashboard/metrics"
+        className="flex flex-wrap items-center gap-2 text-sm"
+      >
+        <label className="text-neutral-500">
+          Desde{" "}
+          <input
+            type="date"
+            name="from"
+            defaultValue={fromDay}
+            className="rounded-lg border border-neutral-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+        <label className="text-neutral-500">
+          Hasta{" "}
+          <input
+            type="date"
+            name="to"
+            defaultValue={toDay}
+            className="rounded-lg border border-neutral-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+        <button
+          type="submit"
+          className="rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800"
+        >
+          Filtrar
+        </button>
+        {hasRange && (
+          <Link
+            href="/dashboard/metrics"
+            className="text-xs text-neutral-500 underline hover:text-neutral-900"
+          >
+            Limpiar
+          </Link>
+        )}
+      </form>
 
       <section className="grid grid-cols-2 gap-4 md:grid-cols-3">
         <Stat label="Conversaciones" value={conversations.count ?? 0} />

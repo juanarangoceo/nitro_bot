@@ -58,14 +58,22 @@ export function Sidebar({
         })}
       </nav>
 
-      <form action={signOut} className="p-3">
-        <button
-          type="submit"
-          className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
+      <div className="space-y-2 p-3">
+        <Link
+          href="/dashboard/legal"
+          className="block px-3 text-[11px] text-neutral-400 hover:text-neutral-700 hover:underline"
         >
-          Cerrar sesión
-        </button>
-      </form>
+          Política de tratamiento de datos
+        </Link>
+        <form action={signOut}>
+          <button
+            type="submit"
+            className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
+          >
+            Cerrar sesión
+          </button>
+        </form>
+      </div>
     </aside>
   );
 }
