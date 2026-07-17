@@ -665,7 +665,59 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   - OJO: una venta cerrada desde el número de prueba SÍ crea la orden real en
     Shopify (a propósito: prueba e2e) — cancelarla allá; en métricas no cuenta.
 
+- **Sesión 2026-07-16/17 — 4 specs de optimización del dashboard (MERGEADAS a
+  main, migraciones #23-#25 aplicadas, typecheck/build/verify verdes, deploy
+  en curso al escribir esto)**:
+  - **Spec A — Identidad + «Respondida por» (migración #23)**: `app_users.name`
+    (se gestiona SOLO desde /admin: input en el alta + action `updateUserName`
+    auditada), `messages.sent_by` (las actions de tickets lo escriben
+    server-side desde el contexto auth; los 218 mensajes históricos quedan
+    NULL → "agent"), `tickets.resolved_by`, y policy `app_users_team_select`
+    (todo el equipo resuelve id→nombre/email; sin write para authenticated).
+    Tickets y Conversaciones muestran `{nombre} · HH:mm` en burbujas de
+    agente; la matriz de /dashboard/labels muestra nombre + correo. Bonus:
+    RLS habilitado en `_migrations` (advisor de Supabase; el runner conecta
+    como postgres/owner → no le aplica). Verificado 6/6 checks RLS.
+  - **Spec B — Visibilidad ESTRICTA de tickets (migración #24)**: la policy
+    `tenant_isolation` de tickets se separó por verbo; el SELECT impone la
+    regla en la DB: admin ve todo; agente ve sus etiquetas + los sin
+    etiqueta; agente SIN etiquetas ve SOLO los sin etiqueta (se INVIRTIÓ el
+    opt-in de 0021 "sin etiquetas ve todo" — decisión de Juan 2026-07-16).
+    El filtro de query en /dashboard/tickets aplica siempre (defensa en
+    profundidad); badge «Sin etiqueta» en lista y detalle. Realtime respeta
+    el SELECT. Verificado 5/5 (admin 3 / agente-X 2 / agente-sin 1 /
+    cross-tenant 0 / insert manual OK).
+  - **Spec C — Ventas por fecha + política de datos**: `lib/dates.ts`
+    (`bogotaDayStart/End`, offset fijo -05:00, verificado que las 23:30 COT
+    caen en su día). Métricas acepta `?from/?to` (días Bogotá) que prevalece
+    sobre Semana/Mes y aplica a órdenes, ventas y top de productos.
+    `/dashboard/legal`: Política de Tratamiento de Datos (Ley 1581/2012,
+    texto estándar adaptado a Nitro Ecom, versionada en el repo v1.0) +
+    link en el bloque inferior del sidebar. OJO: pendiente revisión legal
+    del texto (doc 06 de Drive sigue en borrador).
+  - **Spec D — Módulo «Búsquedas» (migración #25)**: tabla `search_log`
+    (lectura RLS por tenant; escritura SOLO service_role con revoke
+    explícito — patrón 0018). `buscar_productos`/`ver_detalle_producto`
+    registran best-effort (`lib/ai/search-log.ts`, jamás lanza) la consulta,
+    `result_count` y `top_similarity`; el probador (testMode) NO escribe.
+    `/dashboard/searches` (nav opt-out `modules.searches`): palabras más
+    buscadas, productos más consultados (join a products con foto) y
+    «búsquedas que tu catálogo no cubre» (sin resultados o similarity <0.45
+    — umbral inicial a calibrar; la tabla muestra el %). Filtro de fechas
+    Bogotá. Sin histórico: tool_trace no guarda conteos (v1 acumula desde el
+    deploy). Verificado 7/7 contra RAG real (similarity 0.76 en búsqueda
+    real de Elegance).
+
 ### 🔜 Pendiente
+- **Post-deploy specs A-D (2026-07-17)**: (1) poner NOMBRE a los usuarios de
+  Elegance desde /admin → detalle del cliente; (2) responder un ticket real y
+  ver «{nombre} · hora» en la burbuja; (3) login con un agente real y
+  confirmar que su bandeja filtra estricto (sin etiquetas = solo «Sin
+  etiqueta» — avisar a Elegance del cambio de regla: antes veían todo);
+  (4) filtrar Métricas por un rango de fechas y cotejar contra Shopify;
+  (5) tras unos días, revisar /dashboard/searches con demanda real y calibrar
+  el umbral 0.45; (6) abrir la política en /dashboard/legal y mandarla a
+  revisión legal.
 - **Post-deploy fotos+etiquetas (2026-07-15)**: (1) por WhatsApp real pedir un
   producto → 1 foto; seguir chateando → no repite; "más fotos" → manda las que
   faltan; (2) escalar un caso real → ticket con etiqueta visible en
