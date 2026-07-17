@@ -18,7 +18,7 @@ export function MarkPaidButton({
 }) {
   const warning =
     concept === "renovacion"
-      ? "¿El cliente YA PAGÓ la renovación?\n\nEsto reinicia su ciclo: contador a 0, créditos completos del plan y fecha de corte a hoy + 1 mes.\n\nSi solo quieres quitar una alerta o despausar el bot SIN pago real, cancela: NO uses este botón."
+      ? "¿El cliente YA PAGÓ la renovación?\n\nSi ya agotó sus créditos (o llegó el corte), el ciclo nuevo arranca YA: contador a 0 y corte a hoy + 1 mes.\n\nSi todavía le quedan créditos, el pago queda PROGRAMADO: el ciclo nuevo arranca solo al agotarlos o al llegar el corte, lo que ocurra primero.\n\nSi NO ha pagado de verdad, cancela: no uses este botón."
       : "¿El cliente ya pagó el paquete adicional?\n\nEsto solo registra el pago (no reinicia el contador).";
 
   return (

@@ -105,6 +105,8 @@ export async function processBillingOnMessage(
         Date.now() - new Date(addonInv.createdAt).getTime() >
           ADDON_PENDING_DAYS * 24 * 60 * 60 * 1000
       ) {
+        // Renovación pagada en espera → el ciclo nuevo arranca aquí mismo.
+        if (await tryActivateQueuedRenewal(tenant)) return { allowed: true };
         console.warn(
           `[billing] tenant ${tenant.id}: adicional vencido (${ADDON_PENDING_DAYS} días sin pago); pausado.`
         );
@@ -144,9 +146,12 @@ export async function processBillingOnMessage(
       }
     }
 
-    // Agotado el total del ciclo → pausa (alerta solo en el cruce exacto: el
-    // contador pasa por cada valor una sola vez).
+    // Agotado el total del ciclo: si la renovación ya está pagada (pago
+    // anticipado programado), el ciclo nuevo arranca solo y el bot sigue;
+    // si no, pausa (alerta solo en el cruce exacto: el contador pasa por
+    // cada valor una sola vez).
     if (count > effectiveLimit) {
+      if (await tryActivateQueuedRenewal(tenant)) return { allowed: true };
       if (count === effectiveLimit + 1) {
         await sendTelegramAlert(
           `🔴 <b>${escTelegram(tenant.name)}</b> agotó ${effectiveLimit.toLocaleString(
@@ -200,13 +205,99 @@ export async function generateUpcomingRenewals(): Promise<string[]> {
   return invoiced;
 }
 
-// Marca una factura como pagada. Renovación: resetea el contador (ciclo
-// nuevo), corre el corte a pago + 1 mes y aplica el cambio de plan programado
-// (pending_plan) si lo hay. Adicional: solo limpia la deuda. En ambos casos
-// billing_status queda 'pagado' solo si no quedan facturas pendientes.
+// Recalcula billing_status: pagado solo si no queda ninguna factura pendiente.
+async function refreshBillingStatus(tenantId: string): Promise<void> {
+  const admin = createAdminClient();
+  const { count } = await admin
+    .from("invoices")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .eq("status", "pendiente");
+  await admin
+    .from("tenants")
+    .update({ billing_status: (count ?? 0) > 0 ? "pendiente" : "pagado" })
+    .eq("id", tenantId);
+}
+
+// Arranca el ciclo nuevo: contador a `countStart` (1 cuando lo dispara un
+// mensaje, para que ese mensaje cuente en el ciclo que empieza), corte =
+// hoy(Bogotá) + 1 mes y aplica el cambio de plan programado (pending_plan).
+async function activateNextCycle(tenantId: string, countStart: 0 | 1): Promise<boolean> {
+  const admin = createAdminClient();
+  const { data: tenant } = await admin
+    .from("tenants")
+    .select("id, pending_plan")
+    .eq("id", tenantId)
+    .maybeSingle();
+  if (!tenant) return false;
+
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  const next = new Date(`${today}T12:00:00Z`);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+
+  const update: Record<string, unknown> = {
+    current_month_messages: countStart,
+    counter_period_start: new Date().toISOString(),
+    billing_due_date: next.toISOString().slice(0, 10),
+    pending_plan: null,
+  };
+  const pending = (tenant.pending_plan ?? null) as {
+    message_limit?: number;
+    monthly_fee?: number;
+    plan?: string;
+  } | null;
+  if (pending) {
+    if (Number.isFinite(pending.message_limit)) update.message_limit = pending.message_limit;
+    if (Number.isFinite(pending.monthly_fee)) update.monthly_fee = pending.monthly_fee;
+    if (pending.plan) update.plan = pending.plan;
+  }
+  const { error } = await admin.from("tenants").update(update).eq("id", tenantId);
+  if (error) {
+    console.error("[billing] activateNextCycle falló:", error.message);
+    return false;
+  }
+  await refreshBillingStatus(tenantId);
+  return true;
+}
+
+// Renovación PAGADA del ciclo vigente que aún no arrancó (el pago anticipado
+// queda programado: su cycle_start sigue siendo el counter_period_start
+// actual — al activar, el ciclo cambia y deja de coincidir).
+async function findQueuedRenewal(tenant: BillingTenant): Promise<boolean> {
+  const admin = createAdminClient();
+  const { count } = await admin
+    .from("invoices")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenant.id)
+    .eq("concept", "renovacion")
+    .eq("status", "pagada")
+    .eq("cycle_start", tenant.counter_period_start);
+  return (count ?? 0) > 0;
+}
+
+// Si hay una renovación pagada en espera, arranca el ciclo nuevo (lo llama el
+// worker justo cuando el ciclo actual se agota: el bot ni se entera).
+async function tryActivateQueuedRenewal(tenant: BillingTenant): Promise<boolean> {
+  if (!(await findQueuedRenewal(tenant))) return false;
+  const ok = await activateNextCycle(tenant.id, 1);
+  if (ok) {
+    await sendTelegramAlert(
+      `🟢 <b>${escTelegram(tenant.name)}</b>: se agotó su ciclo y la renovación ya estaba ` +
+        `pagada — el ciclo nuevo arrancó solo (corte: hoy + 1 mes).`
+    );
+  }
+  return ok;
+}
+
+// Marca una factura como pagada.
+// Renovación: si el tenant YA agotó sus créditos (o el corte ya llegó), el
+// ciclo nuevo arranca de inmediato; si aún le quedan créditos, el pago queda
+// PROGRAMADO y el ciclo arranca solo al agotarlos o al llegar el corte — lo
+// que ocurra primero (el cliente no pierde lo que ya pagó del adicional).
+// Adicional: solo limpia la deuda.
 export async function markInvoicePaid(
   invoiceId: string
-): Promise<{ ok: boolean; error?: string; concept?: string }> {
+): Promise<{ ok: boolean; error?: string; concept?: string; queued?: boolean }> {
   const admin = createAdminClient();
 
   const { data: invoice } = await admin
@@ -223,52 +314,59 @@ export async function markInvoicePaid(
     .eq("id", invoice.id);
   if (payErr) return { ok: false, error: payErr.message };
 
+  let queued = false;
   if (invoice.concept === "renovacion") {
     const { data: tenant } = await admin
       .from("tenants")
-      .select("id, pending_plan")
+      .select(
+        "id, current_month_messages, message_limit, addon_enabled, addon_price, billing_due_date"
+      )
       .eq("id", invoice.tenant_id)
       .maybeSingle();
+    if (!tenant) return { ok: false, error: "Cliente no encontrado." };
 
-    // Nuevo corte: hoy (Bogotá) + 1 mes.
+    const addonOn = tenant.addon_enabled === true && tenant.addon_price != null;
+    const effective = tenant.message_limit + (addonOn ? ADDON_MESSAGES : 0);
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
-    const next = new Date(`${today}T12:00:00Z`);
-    next.setUTCMonth(next.getUTCMonth() + 1);
+    const exhausted = tenant.current_month_messages > effective;
+    const corteReached = tenant.billing_due_date != null && tenant.billing_due_date <= today;
 
-    const update: Record<string, unknown> = {
-      current_month_messages: 0,
-      counter_period_start: new Date().toISOString(),
-      billing_due_date: next.toISOString().slice(0, 10),
-      pending_plan: null,
-    };
-    // Cambio de plan programado «al próximo ciclo»: se aplica aquí.
-    const pending = (tenant?.pending_plan ?? null) as {
-      message_limit?: number;
-      monthly_fee?: number;
-      plan?: string;
-    } | null;
-    if (pending) {
-      if (Number.isFinite(pending.message_limit)) update.message_limit = pending.message_limit;
-      if (Number.isFinite(pending.monthly_fee)) update.monthly_fee = pending.monthly_fee;
-      if (pending.plan) update.plan = pending.plan;
+    if (exhausted || corteReached) {
+      const ok = await activateNextCycle(invoice.tenant_id, 0);
+      if (!ok) return { ok: false, error: "No se pudo reiniciar el ciclo." };
+    } else {
+      // Quedan créditos: el arranque queda programado (worker/cron lo activan).
+      queued = true;
     }
-    const { error: tErr } = await admin
-      .from("tenants")
-      .update(update)
-      .eq("id", invoice.tenant_id);
-    if (tErr) return { ok: false, error: tErr.message };
   }
 
-  // Estado del tenant: pagado solo si no queda ninguna factura pendiente.
-  const { count } = await admin
-    .from("invoices")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", invoice.tenant_id)
-    .eq("status", "pendiente");
-  await admin
-    .from("tenants")
-    .update({ billing_status: (count ?? 0) > 0 ? "pendiente" : "pagado" })
-    .eq("id", invoice.tenant_id);
+  await refreshBillingStatus(invoice.tenant_id);
+  return { ok: true, concept: invoice.concept, queued };
+}
 
-  return { ok: true, concept: invoice.concept };
+// Cron diario: arranca el ciclo de los tenants cuyo corte YA llegó y tienen
+// la renovación pagada en espera (pagaron anticipado y no agotaron créditos).
+export async function activateDueRenewals(): Promise<string[]> {
+  const admin = createAdminClient();
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  const { data: tenants, error } = await admin
+    .from("tenants")
+    .select("id, name, counter_period_start, monthly_fee, addon_price, addon_enabled, billing_due_date, pending_plan")
+    .eq("is_active", true)
+    .not("billing_due_date", "is", null)
+    .lte("billing_due_date", today);
+  if (error) throw new Error(`billing cron (activación): ${error.message}`);
+
+  const activated: string[] = [];
+  for (const t of (tenants ?? []) as BillingTenant[]) {
+    if (!(await findQueuedRenewal(t))) continue;
+    if (await activateNextCycle(t.id, 0)) {
+      activated.push(t.name);
+      await sendTelegramAlert(
+        `🟢 <b>${escTelegram(t.name)}</b>: llegó su corte con la renovación ya pagada — ` +
+          `ciclo nuevo arrancado (corte: hoy + 1 mes).`
+      );
+    }
+  }
+  return activated;
 }

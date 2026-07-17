@@ -466,7 +466,10 @@ export default async function ClientDetailPage({
                     </div>
                     {inv.status === "pagada" ? (
                       <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                        Pagada
+                        {inv.concept === "renovacion" &&
+                        inv.cycle_start === t.counter_period_start
+                          ? "Pagada · el ciclo nuevo arranca al agotar créditos o en el corte"
+                          : "Pagada"}
                       </span>
                     ) : (
                       <MarkPaidButton
