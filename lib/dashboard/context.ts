@@ -24,6 +24,7 @@ export type DashboardTenant = {
   billing_due_date: string | null;
   billing_status: string | null;
   addon_price: number | null;
+  addon_enabled: boolean;
 };
 
 export async function getDashboardContext() {
@@ -42,7 +43,7 @@ export async function getDashboardContext() {
   const { data: tenant } = await supabase
     .from("tenants")
     .select(
-      "id, name, slug, system_prompt, ai_model, message_limit, current_month_messages, counter_period_start, modules, is_active, logo_url, brand_color, plan, monthly_fee, billing_due_date, billing_status, addon_price"
+      "id, name, slug, system_prompt, ai_model, message_limit, current_month_messages, counter_period_start, modules, is_active, logo_url, brand_color, plan, monthly_fee, billing_due_date, billing_status, addon_price, addon_enabled"
     )
     .eq("id", appUser.tenant_id)
     .maybeSingle();

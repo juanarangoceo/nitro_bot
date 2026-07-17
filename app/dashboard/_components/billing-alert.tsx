@@ -4,7 +4,7 @@
 // usuarios con rol admin (el módulo /dashboard/plan está restringido).
 
 import Link from "next/link";
-import { billingInfo, formatDueDate } from "@/lib/billing";
+import { ADDON_MESSAGES, billingInfo, formatDueDate } from "@/lib/billing";
 import type { DashboardTenant } from "@/lib/dashboard/context";
 
 export function BillingAlert({
@@ -16,15 +16,23 @@ export function BillingAlert({
 }) {
   const used = tenant.current_month_messages;
   const limit = tenant.message_limit || 1;
-  const pct = Math.min(100, Math.round((used / limit) * 100));
+  // Con el adicional automático activado, el ciclo real es plan + 2.000.
+  const addonOn = tenant.addon_enabled === true && tenant.addon_price != null;
+  const effective = addonOn ? limit + ADDON_MESSAGES : limit;
+  const pct = Math.min(100, Math.round((used / effective) * 100));
   const billing = billingInfo(tenant);
 
   let tone: "red" | "amber" | null = null;
   let message = "";
-  if (used >= limit) {
+  if (used >= effective) {
     tone = "red";
     message =
-      "Se agotaron los créditos de tu plan este mes y el asistente dejó de responder a tus clientes. Recarga ahora para reactivar el servicio.";
+      "Se agotaron los créditos de tu ciclo y el asistente dejó de responder a tus clientes. Realiza el pago de la renovación para reactivar el servicio.";
+  } else if (used >= limit && addonOn) {
+    tone = "amber";
+    message = `Se agotó tu plan y el asistente sigue atendiendo con el paquete adicional de ${ADDON_MESSAGES.toLocaleString(
+      "es-CO"
+    )} mensajes (queda una factura pendiente). Realiza el pago para renovar tu plan.`;
   } else if (billing.overdue) {
     tone = "red";
     message = `Tienes una factura pendiente vencida (fecha de corte: ${formatDueDate(

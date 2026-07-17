@@ -21,6 +21,12 @@ export type Tenant = {
   payment_mode: string;
   message_limit: number;
   current_month_messages: number;
+  counter_period_start: string;
+  // Facturación (ciclo por pago, 0026): mensualidad, adicional y corte.
+  monthly_fee: number | null;
+  addon_price: number | null;
+  addon_enabled: boolean;
+  billing_due_date: string | null;
   modules: Record<string, boolean>;
   is_active: boolean;
   voice_replies_enabled: boolean;
