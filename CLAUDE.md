@@ -708,7 +708,44 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     deploy). Verificado 7/7 contra RAG real (similarity 0.76 en búsqueda
     real de Elegance).
 
+- **Sesión 2026-07-17 — Ciclo de facturación por PAGO (migración #26,
+  MERGEADO y desplegado; verificado 13/13 contra la DB real)**: el ciclo NO lo
+  manda el calendario sino el pago (decisión de Juan). Detalle:
+  - **Tabla `invoices`** (una `renovacion` y un `adicional` por ciclo — unique
+    index `(tenant_id, concept, cycle_start)` con `cycle_start =
+    counter_period_start`): el cliente LEE las suyas por RLS
+    (/dashboard/plan); escribe solo service_role (revoke patrón 0018).
+  - **`lib/billing-cycle.ts`** (el worker lo llama tras el RPC del contador):
+    (a) plan agotado + `tenants.addon_enabled` → factura del adicional
+    (ADDON_MESSAGES=2000, precio `addon_price`) y el bot SIGUE respondiendo;
+    (b) renovación al 80% del total del ciclo (plan, o plan+2000 si entró el
+    adicional) o a ≤10 días del corte (cron diario nuevo `/api/cron/billing`,
+    11:00 UTC, misma idempotencia); (c) agotado el TOTAL sin pago → el bot se
+    PAUSA (palanca de cobro). Alertas Telegram en cada cruce (no-op sin
+    envs). Best-effort: fallo al facturar jamás tumba la respuesta.
+  - **«Marcar pagada»** (botón por factura en /admin, card Plan y
+    facturación, auditado `invoice_paid`): renovación → contador a 0, corte =
+    hoy(Bogotá)+1 mes, aplica `pending_plan` si existe, `billing_status`
+    recalculado (pagado solo sin pendientes); adicional → solo limpia deuda.
+  - **Cambio de plan** en «Datos del cliente» con radio: «ahora» (pisa el
+    ciclo) o «al próximo ciclo» (queda en `tenants.pending_plan` y lo aplica
+    el pago de la renovación; badge ámbar con lo programado).
+  - **Funciones SQL** (`increment_message_counter`,
+    `reset_stale_message_counters`) ya NO resetean por calendario a los
+    tenants con `billing_due_date`; sin corte configurado el comportamiento
+    mensual sigue idéntico (Elegance sigue mensual hasta que Juan configure
+    su corte en /admin).
+  - Dashboard cliente: banner y /dashboard/plan entienden el adicional (barra
+    contra el total del ciclo, «estás usando el paquete adicional», lista de
+    facturas con estado).
+
 ### 🔜 Pendiente
+- **Activar el ciclo de facturación de Elegance (2026-07-17)**: en /admin →
+  Elegance: poner fecha de corte real, mensualidad y precio del adicional, y
+  encender «Adicional automático» si aplica. OJO: al poner fecha de corte el
+  tenant SALE del reseteo mensual del día 1 — su contador solo se reinicia al
+  marcar pagada una renovación (o con «Reiniciar contador»). Vigilar el primer
+  ciclo completo: factura al 80% o a 10 días del corte → pago → reset.
 - **Post-deploy specs A-D (2026-07-17)**: (1) poner NOMBRE a los usuarios de
   Elegance desde /admin → detalle del cliente; (2) responder un ticket real y
   ver «{nombre} · hora» en la burbuja; (3) login con un agente real y
