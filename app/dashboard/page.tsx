@@ -1,4 +1,5 @@
 import { getDashboardContext } from "@/lib/dashboard/context";
+import { ADDON_MESSAGES } from "@/lib/billing";
 
 function monthLabel(iso: string): string {
   return new Date(iso).toLocaleDateString("es-CO", { month: "long", year: "numeric" });
@@ -9,7 +10,12 @@ export default async function DashboardHome() {
 
   const used = tenant.current_month_messages;
   const limit = tenant.message_limit || 1;
-  const pct = Math.min(100, Math.round((used / limit) * 100));
+  // Con el adicional automático activado, el ciclo real es plan + 2.000; en
+  // esa fase el consumo se muestra contra el total (nunca "pasado" del plan).
+  const addonOn = tenant.addon_enabled === true && tenant.addon_price != null;
+  const effective = addonOn ? limit + ADDON_MESSAGES : limit;
+  const inAddon = addonOn && used > limit;
+  const pct = Math.min(100, Math.round((used / effective) * 100));
   const alert80 = pct >= 80;
 
   // Conteos rápidos (RLS los limita al tenant).
@@ -33,13 +39,19 @@ export default async function DashboardHome() {
       <section className="rounded-2xl border border-neutral-200 bg-white p-6">
         <div className="flex items-end justify-between">
           <div>
-            <p className="text-sm text-neutral-500">Mensajes este mes</p>
+            <p className="text-sm text-neutral-500">Mensajes de este ciclo</p>
             <p className="mt-1 text-3xl font-semibold text-neutral-900">
               {used.toLocaleString("es-CO")}{" "}
               <span className="text-base font-normal text-neutral-400">
-                / {limit.toLocaleString("es-CO")}
+                / {effective.toLocaleString("es-CO")}
               </span>
             </p>
+            {inAddon && (
+              <p className="mt-1 text-xs text-amber-700">
+                Tu plan de {limit.toLocaleString("es-CO")} se agotó: estás usando el
+                paquete adicional de {ADDON_MESSAGES.toLocaleString("es-CO")}.
+              </p>
+            )}
           </div>
           <span
             className={`rounded-full px-3 py-1 text-sm font-medium ${
@@ -59,8 +71,8 @@ export default async function DashboardHome() {
 
         {alert80 && (
           <p className="mt-3 text-sm text-amber-700">
-            ⚠️ Vas en el {pct}% de tu plan mensual. Considera ampliar el límite para no
-            interrumpir la atención.
+            ⚠️ Vas en el {pct}% de los créditos de tu ciclo. Realiza el pago de la
+            renovación a tiempo para no interrumpir la atención.
           </p>
         )}
       </section>

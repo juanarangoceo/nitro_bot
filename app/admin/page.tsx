@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getPlatformAdminContext } from "@/lib/admin/context";
-import { billingInfo, formatCop } from "@/lib/billing";
+import { ADDON_MESSAGES, billingInfo, formatCop } from "@/lib/billing";
 
 type TenantRow = {
   id: string;
@@ -11,28 +11,39 @@ type TenantRow = {
   monthly_fee: number | null;
   message_limit: number;
   current_month_messages: number;
+  addon_enabled: boolean;
+  addon_price: number | null;
   wa_display_name: string | null;
   wa_phone_number_id: string | null;
   billing_due_date: string | null;
   billing_status: string | null;
 };
 
-function ConsumptionBar({ used, limit }: { used: number; limit: number }) {
-  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-  const out = limit > 0 && used >= limit;
+// Barra de consumo consciente del adicional: si el tenant lo tiene activado,
+// el tope real del ciclo es plan + 2.000 y la fase «adicional en uso» se
+// muestra en ámbar (NO en rojo: el bot sigue respondiendo y hay factura).
+function ConsumptionBar({ used, limit, addonOn }: { used: number; limit: number; addonOn: boolean }) {
+  const effective = addonOn ? limit + ADDON_MESSAGES : limit;
+  const pct = effective > 0 ? Math.min(100, Math.round((used / effective) * 100)) : 0;
+  const out = effective > 0 && used >= effective;
+  const inAddon = !out && addonOn && used > limit;
   const over80 = pct >= 80;
   return (
     <div className="w-40">
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
         <div
-          className={`h-full ${out ? "bg-red-500" : over80 ? "bg-amber-500" : "bg-emerald-500"}`}
+          className={`h-full ${
+            out ? "bg-red-500" : inAddon || over80 ? "bg-amber-500" : "bg-emerald-500"
+          }`}
           style={{ width: `${pct}%` }}
         />
       </div>
       <p className="mt-1 text-[11px] text-neutral-500">
-        {used.toLocaleString("es-CO")} / {limit.toLocaleString("es-CO")} ({pct}%)
+        {used.toLocaleString("es-CO")} / {effective.toLocaleString("es-CO")} ({pct}%)
         {out ? (
           <span className="ml-1 font-medium text-red-600">sin créditos 🚫</span>
+        ) : inAddon ? (
+          <span className="ml-1 font-medium text-amber-600">adicional en uso 🟠</span>
         ) : over80 ? (
           <span className="ml-1 font-medium text-amber-600">por agotarse ⚠️</span>
         ) : null}
@@ -60,7 +71,7 @@ export default async function AdminClientsPage() {
   const { data } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, wa_display_name, wa_phone_number_id, billing_due_date, billing_status"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, addon_enabled, addon_price, wa_display_name, wa_phone_number_id, billing_due_date, billing_status"
     )
     .order("created_at", { ascending: true });
   const tenants = (data as TenantRow[]) ?? [];
@@ -117,7 +128,11 @@ export default async function AdminClientsPage() {
                   {t.wa_display_name ?? t.wa_phone_number_id ?? "—"}
                 </td>
                 <td className="px-5 py-3">
-                  <ConsumptionBar used={t.current_month_messages} limit={t.message_limit} />
+                  <ConsumptionBar
+                    used={t.current_month_messages}
+                    limit={t.message_limit}
+                    addonOn={t.addon_enabled === true && t.addon_price != null}
+                  />
                 </td>
               </tr>
             ))}

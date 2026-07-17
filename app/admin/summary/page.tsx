@@ -1,4 +1,5 @@
 import { getPlatformAdminContext } from "@/lib/admin/context";
+import { ADDON_MESSAGES } from "@/lib/billing";
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -20,7 +21,9 @@ export default async function PlatformSummaryPage() {
   const [tenantsRes, ordersRes] = await Promise.all([
     admin
       .from("tenants")
-      .select("id, name, is_active, plan, monthly_fee, message_limit, current_month_messages")
+      .select(
+        "id, name, is_active, plan, monthly_fee, message_limit, current_month_messages, addon_enabled, addon_price"
+      )
       .order("monthly_fee", { ascending: false, nullsFirst: false }),
     admin.from("orders").select("tenant_id, total, created_at").gte("created_at", startOfMonth),
   ]);
@@ -82,7 +85,10 @@ export default async function PlatformSummaryPage() {
                 </td>
                 <td className="px-6 py-2.5 text-right tabular-nums text-neutral-700">
                   {Number(t.current_month_messages ?? 0).toLocaleString("es-CO")} /{" "}
-                  {Number(t.message_limit ?? 0).toLocaleString("es-CO")}
+                  {(
+                    Number(t.message_limit ?? 0) +
+                    (t.addon_enabled === true && t.addon_price != null ? ADDON_MESSAGES : 0)
+                  ).toLocaleString("es-CO")}
                 </td>
                 <td className="px-6 py-2.5 text-right tabular-nums text-neutral-700">
                   {fmtCOP(revByTenant.get(t.id) ?? 0)}

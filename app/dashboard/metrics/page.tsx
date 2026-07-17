@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getDashboardContext } from "@/lib/dashboard/context";
 import { bogotaDayStart, bogotaDayEnd } from "@/lib/dates";
+import { ADDON_MESSAGES } from "@/lib/billing";
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
@@ -238,8 +239,12 @@ export default async function MetricsPage({
       </section>
 
       <p className="text-xs text-neutral-400">
-        Consumo del mes: {tenant.current_month_messages.toLocaleString("es-CO")} /{" "}
-        {tenant.message_limit.toLocaleString("es-CO")} mensajes.
+        Consumo del ciclo: {tenant.current_month_messages.toLocaleString("es-CO")} /{" "}
+        {(tenant.addon_enabled === true && tenant.addon_price != null
+          ? tenant.message_limit + ADDON_MESSAGES
+          : tenant.message_limit
+        ).toLocaleString("es-CO")}{" "}
+        mensajes.
       </p>
     </div>
   );

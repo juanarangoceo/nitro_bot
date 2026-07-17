@@ -5,8 +5,8 @@ import {
   setTenantActive,
   updateTenantCommercial,
   updateTenantBilling,
-  markInvoicePaidAdmin,
 } from "../../actions";
+import { MarkPaidButton } from "./mark-paid-button";
 import { ADDON_MESSAGES, billingInfo, formatCop, formatDueDate } from "@/lib/billing";
 import {
   PromptEditor,
@@ -301,8 +301,23 @@ export default async function ClientDetailPage({
               />
             </label>
             <p className="text-xs text-neutral-400">
-              Consumo actual: {Number(t.current_month_messages ?? 0).toLocaleString("es-CO")} /{" "}
-              {Number(t.message_limit ?? 0).toLocaleString("es-CO")}
+              {(() => {
+                const used = Number(t.current_month_messages ?? 0);
+                const limit = Number(t.message_limit ?? 0);
+                const addonOn = t.addon_enabled === true && t.addon_price != null;
+                const effective = addonOn ? limit + ADDON_MESSAGES : limit;
+                return (
+                  <>
+                    Consumo actual: {used.toLocaleString("es-CO")} /{" "}
+                    {effective.toLocaleString("es-CO")}
+                    {addonOn &&
+                      ` (plan ${limit.toLocaleString("es-CO")} + adicional ${ADDON_MESSAGES.toLocaleString("es-CO")})`}
+                    {addonOn && used > limit && used < effective && (
+                      <span className="font-medium text-amber-600"> · adicional en uso 🟠</span>
+                    )}
+                  </>
+                );
+              })()}
             </p>
             <button
               type="submit"
@@ -462,16 +477,11 @@ export default async function ClientDetailPage({
                         Pagada
                       </span>
                     ) : (
-                      <form action={markInvoicePaidAdmin}>
-                        <input type="hidden" name="invoice_id" value={inv.id} />
-                        <input type="hidden" name="tenant_id" value={t.id} />
-                        <button
-                          type="submit"
-                          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-                        >
-                          Marcar pagada
-                        </button>
-                      </form>
+                      <MarkPaidButton
+                        invoiceId={inv.id}
+                        tenantId={t.id}
+                        concept={inv.concept}
+                      />
                     )}
                   </li>
                 );
