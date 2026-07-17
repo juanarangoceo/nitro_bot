@@ -12,7 +12,7 @@
 
 import { createAdminClient } from "./supabase/admin";
 import { sendTelegramAlert, escTelegram } from "./notify/telegram";
-import { ADDON_MESSAGES, formatCop } from "./billing";
+import { ADDON_MESSAGES, ADDON_PENDING_DAYS, formatCop } from "./billing";
 
 type BillingTenant = {
   id: string;
@@ -29,28 +29,44 @@ type Counter = { current_count: number; message_limit: number };
 
 // Crea la factura del ciclo si no existe (idempotente por el unique index
 // (tenant, concept, cycle_start)). Marca al tenant «pendiente» al crearla.
-// Devuelve true SOLO cuando la factura es nueva (para alertar una sola vez).
+// `created` es true SOLO cuando la factura es nueva (para alertar una vez);
+// si ya existía devuelve su estado y fecha (vigencia del adicional).
 async function ensureInvoice(
   tenant: BillingTenant,
   concept: "renovacion" | "adicional",
   amount: number
-): Promise<boolean> {
+): Promise<{ created: boolean; status: string; createdAt: string }> {
   const admin = createAdminClient();
-  const { error } = await admin.from("invoices").insert({
-    tenant_id: tenant.id,
-    concept,
-    amount,
-    cycle_start: tenant.counter_period_start,
-  });
-  if (error) {
-    // 23505 = ya existe la del ciclo (lo normal a partir del segundo mensaje).
-    if (error.code !== "23505") {
-      console.error(`[billing] no se pudo crear factura ${concept}:`, error.message);
-    }
-    return false;
+  const { data: inserted, error } = await admin
+    .from("invoices")
+    .insert({
+      tenant_id: tenant.id,
+      concept,
+      amount,
+      cycle_start: tenant.counter_period_start,
+    })
+    .select("status, created_at")
+    .single();
+  if (!error && inserted) {
+    await admin.from("tenants").update({ billing_status: "pendiente" }).eq("id", tenant.id);
+    return { created: true, status: inserted.status, createdAt: inserted.created_at };
   }
-  await admin.from("tenants").update({ billing_status: "pendiente" }).eq("id", tenant.id);
-  return true;
+  // 23505 = ya existe la del ciclo (lo normal a partir del segundo mensaje).
+  if (error && error.code !== "23505") {
+    console.error(`[billing] no se pudo crear factura ${concept}:`, error.message);
+  }
+  const { data: existing } = await admin
+    .from("invoices")
+    .select("status, created_at")
+    .eq("tenant_id", tenant.id)
+    .eq("concept", concept)
+    .eq("cycle_start", tenant.counter_period_start)
+    .maybeSingle();
+  return {
+    created: false,
+    status: existing?.status ?? "pendiente",
+    createdAt: existing?.created_at ?? new Date().toISOString(),
+  };
 }
 
 // Procesa el consumo de UN mensaje ya contado (counter viene del RPC
@@ -69,15 +85,29 @@ export async function processBillingOnMessage(
 
   try {
     // Plan agotado con adicional activado → factura del adicional (una vez).
+    // Vigencia: con la factura PENDIENTE, el adicional vence a los 15 días
+    // (puente de cobro); pagada, manda solo el tope de mensajes.
     if (count > planLimit && addonOn) {
-      const created = await ensureInvoice(tenant, "adicional", Number(tenant.addon_price));
-      if (created) {
+      const addonInv = await ensureInvoice(tenant, "adicional", Number(tenant.addon_price));
+      if (
+        addonInv.status === "pendiente" &&
+        Date.now() - new Date(addonInv.createdAt).getTime() >
+          ADDON_PENDING_DAYS * 24 * 60 * 60 * 1000
+      ) {
+        console.warn(
+          `[billing] tenant ${tenant.id}: adicional vencido (${ADDON_PENDING_DAYS} días sin pago); pausado.`
+        );
+        return { allowed: false };
+      }
+      if (addonInv.created) {
         await sendTelegramAlert(
           `🟠 <b>${escTelegram(tenant.name)}</b> agotó su plan (${planLimit.toLocaleString(
             "es-CO"
           )} msgs) y entró al paquete adicional de ${ADDON_MESSAGES.toLocaleString(
             "es-CO"
-          )}. Factura pendiente: ${escTelegram(formatCop(Number(tenant.addon_price)))}.`
+          )}. Factura pendiente: ${escTelegram(
+            formatCop(Number(tenant.addon_price))
+          )} (vence en ${ADDON_PENDING_DAYS} días si no se registra el pago).`
         );
       }
     }
@@ -85,7 +115,11 @@ export async function processBillingOnMessage(
     // Renovación por consumo: 80% del total del ciclo (una vez por ciclo; el
     // cron de 10-días-antes usa esta misma idempotencia).
     if (tenant.monthly_fee != null && count >= Math.round(effectiveLimit * 0.8)) {
-      const created = await ensureInvoice(tenant, "renovacion", Number(tenant.monthly_fee));
+      const { created } = await ensureInvoice(
+        tenant,
+        "renovacion",
+        Number(tenant.monthly_fee)
+      );
       if (created) {
         await sendTelegramAlert(
           `🟠 <b>${escTelegram(tenant.name)}</b> cruzó el 80% de su ciclo (${count.toLocaleString(
@@ -143,7 +177,7 @@ export async function generateUpcomingRenewals(): Promise<string[]> {
 
   const invoiced: string[] = [];
   for (const t of (tenants ?? []) as BillingTenant[]) {
-    const created = await ensureInvoice(t, "renovacion", Number(t.monthly_fee));
+    const { created } = await ensureInvoice(t, "renovacion", Number(t.monthly_fee));
     if (created) {
       invoiced.push(t.name);
       await sendTelegramAlert(

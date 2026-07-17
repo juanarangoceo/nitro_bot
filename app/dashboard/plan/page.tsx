@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { getDashboardContext } from "@/lib/dashboard/context";
 import {
   ADDON_MESSAGES,
+  ADDON_PENDING_DAYS,
   PAYMENT_HOLDER,
   PAYMENT_METHODS,
   billingInfo,
@@ -62,6 +63,9 @@ export default async function PlanPage() {
               <p className="mt-1 text-sm text-neutral-600">
                 Paquete adicional: {formatCop(tenant.addon_price)} por{" "}
                 {ADDON_MESSAGES.toLocaleString("es-CO")} mensajes extra
+                {tenant.addon_enabled
+                  ? ` (se activa solo al agotar tu plan; paga su factura dentro de los ${ADDON_PENDING_DAYS} días siguientes)`
+                  : ""}
               </p>
             )}
           </div>
