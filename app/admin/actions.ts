@@ -13,6 +13,7 @@ import {
   type BusinessProfile,
 } from "@/lib/whatsapp/meta";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { markInvoicePaid } from "@/lib/billing-cycle";
 import { uploadTenantLogo } from "@/lib/storage";
 import { env } from "@/lib/env";
 import { revalidatePath } from "next/cache";
@@ -154,9 +155,21 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
   const fee = String(fd.get("monthly_fee") ?? "").trim();
   const limit = String(fd.get("message_limit") ?? "").trim();
   if (name) update.name = name;
-  if (plan) update.plan = plan;
-  if (fee) update.monthly_fee = Number(fee);
-  if (limit) update.message_limit = Number(limit);
+  // Cambio de plan (plan/fee/límite) con opción de aplicación: «ahora» pisa el
+  // ciclo vigente; «próximo ciclo» queda en pending_plan y lo aplica el botón
+  // «Marcar pagada» de la factura de renovación (lib/billing-cycle).
+  const applyNextCycle = String(fd.get("plan_apply") ?? "now") === "next_cycle";
+  if (applyNextCycle && (plan || fee || limit)) {
+    update.pending_plan = {
+      ...(plan ? { plan } : {}),
+      ...(fee ? { monthly_fee: Number(fee) } : {}),
+      ...(limit ? { message_limit: Number(limit) } : {}),
+    };
+  } else {
+    if (plan) update.plan = plan;
+    if (fee) update.monthly_fee = Number(fee);
+    if (limit) update.message_limit = Number(limit);
+  }
   // El correo de notificaciones viene prellenado en el formulario, así que se
   // actualiza siempre que el campo esté presente: vaciarlo desactiva los avisos.
   if (fd.has("notification_email")) {
@@ -233,10 +246,35 @@ export async function updateTenantBilling(fd: FormData): Promise<void> {
       update.addon_price = null; // vacío = no ofrecer el paquete adicional
     }
   }
+  // Paso automático al adicional al agotar el plan (checkbox: solo llega
+  // marcado; el hidden marca su presencia). Apagado = se pausa como siempre.
+  if (fd.has("addon_enabled_present")) {
+    update.addon_enabled = fd.get("addon_enabled") === "on";
+  }
   if (Object.keys(update).length === 0) return;
 
   await admin.from("tenants").update(update).eq("id", tenantId);
   await logAudit(admin, { adminId, action: "update_billing", tenantId, detail: update });
+  revalidatePath("/admin");
+  revalidatePath(`/admin/clients/${tenantId}`);
+}
+
+// ── Marcar factura como pagada ──────────────────────────────────────────────
+// Renovación: resetea el contador, corre el corte a pago + 1 mes y aplica el
+// cambio de plan programado. Adicional: solo limpia la deuda. (lib/billing-cycle)
+export async function markInvoicePaidAdmin(fd: FormData): Promise<void> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const invoiceId = String(fd.get("invoice_id") ?? "");
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  if (!invoiceId || !tenantId) return;
+
+  const result = await markInvoicePaid(invoiceId);
+  await logAudit(admin, {
+    adminId,
+    action: "invoice_paid",
+    tenantId,
+    detail: { invoice_id: invoiceId, concept: result.concept, ok: result.ok, error: result.error },
+  });
   revalidatePath("/admin");
   revalidatePath(`/admin/clients/${tenantId}`);
 }

@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPlatformAdminContext } from "@/lib/admin/context";
-import { setTenantActive, updateTenantCommercial, updateTenantBilling } from "../../actions";
+import {
+  setTenantActive,
+  updateTenantCommercial,
+  updateTenantBilling,
+  markInvoicePaidAdmin,
+} from "../../actions";
 import { ADDON_MESSAGES, billingInfo, formatCop, formatDueDate } from "@/lib/billing";
 import {
   PromptEditor,
@@ -56,7 +61,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price, test_phones"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, counter_period_start, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price, addon_enabled, pending_plan, test_phones"
     )
     .eq("id", id)
     .maybeSingle();
@@ -80,6 +85,15 @@ export default async function ClientDetailPage({
     shopifyClientId: !!sec?.shopify_client_id,
     shopifyClientSecret: !!sec?.shopify_client_secret,
   };
+
+  // Facturas del tenant (renovaciones y adicionales), las últimas primero.
+  const { data: invoiceRows } = await admin
+    .from("invoices")
+    .select("id, concept, amount, status, cycle_start, created_at, paid_at")
+    .eq("tenant_id", id)
+    .order("created_at", { ascending: false })
+    .limit(24);
+  const invoices = invoiceRows ?? [];
 
   // Usuarios del dashboard del tenant + último ingreso (Auth Admin API).
   const { data: appUsers } = await admin
@@ -178,6 +192,34 @@ export default async function ClientDetailPage({
                 className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
               />
             </label>
+            <div className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
+              <p className="mb-1 text-xs font-medium text-neutral-600">
+                El cambio de plan/mensualidad/límite se aplica…
+              </p>
+              <label className="mr-4 text-xs text-neutral-700">
+                <input type="radio" name="plan_apply" value="now" defaultChecked /> Ahora
+                (pisa el ciclo vigente)
+              </label>
+              <label className="text-xs text-neutral-700">
+                <input type="radio" name="plan_apply" value="next_cycle" /> Al próximo ciclo
+                (al pagar la renovación)
+              </label>
+              {t.pending_plan && (
+                <p className="mt-2 text-xs font-medium text-amber-700">
+                  Cambio programado:{" "}
+                  {(t.pending_plan as { plan?: string }).plan ?? "mismo plan"} ·{" "}
+                  {formatCop(
+                    (t.pending_plan as { monthly_fee?: number }).monthly_fee ?? t.monthly_fee
+                  )}{" "}
+                  ·{" "}
+                  {(
+                    (t.pending_plan as { message_limit?: number }).message_limit ??
+                    t.message_limit
+                  ).toLocaleString("es-CO")}{" "}
+                  msgs — se aplica al pagar la próxima renovación.
+                </p>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
                 <span className="text-xs font-medium text-neutral-600">Costo de envío (COP)</span>
@@ -359,10 +401,21 @@ export default async function ClientDetailPage({
             />
           </label>
           <div className="sm:col-span-3">
-            <p className="text-xs text-neutral-400">
-              La mensualidad (COP) y el límite de mensajes del plan se editan en «Datos del
-              cliente». Al registrar un pago: marca «Pagado» y mueve la fecha de corte al
-              siguiente periodo; si vendes un paquete adicional, súmalo al límite de mensajes.
+            <input type="hidden" name="addon_enabled_present" value="1" />
+            <label className="flex items-center gap-2 text-sm text-neutral-700">
+              <input
+                type="checkbox"
+                name="addon_enabled"
+                defaultChecked={t.addon_enabled === true}
+              />
+              Adicional automático: al agotar el plan, el bot sigue con el paquete de{" "}
+              {ADDON_MESSAGES.toLocaleString("es-CO")} y se genera la factura pendiente
+              (apagado = el bot se pausa al agotar el plan)
+            </label>
+            <p className="mt-2 text-xs text-neutral-400">
+              La mensualidad (COP) y el límite del plan se editan en «Datos del cliente».
+              Los pagos se registran abajo en «Facturas»: pagar la renovación reinicia el
+              ciclo y corre el corte a pago + 1 mes.
             </p>
             <button
               type="submit"
@@ -372,6 +425,64 @@ export default async function ClientDetailPage({
             </button>
           </div>
         </form>
+
+        <div className="mt-6 border-t border-neutral-100 pt-4">
+          <p className="mb-2 text-xs font-medium text-neutral-700">Facturas</p>
+          {invoices.length === 0 ? (
+            <p className="text-xs text-neutral-400">
+              Sin facturas aún. Se generan solas: renovación al 80% del ciclo o 10 días
+              antes del corte; adicional al agotar el plan (si está activado).
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {invoices.map((inv) => {
+                const isCurrentCycle = inv.cycle_start === t.counter_period_start;
+                return (
+                  <li
+                    key={inv.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm"
+                  >
+                    <div>
+                      <span className="font-medium text-neutral-800">
+                        {inv.concept === "renovacion"
+                          ? "Renovación del plan"
+                          : `Adicional ${ADDON_MESSAGES.toLocaleString("es-CO")} msgs`}
+                      </span>
+                      <span className="ml-2 text-neutral-600">{formatCop(inv.amount)}</span>
+                      <p className="text-[11px] text-neutral-400">
+                        {new Date(inv.created_at).toLocaleDateString("es-CO")}
+                        {isCurrentCycle ? " · ciclo actual" : ""}
+                        {inv.paid_at
+                          ? ` · pagada el ${new Date(inv.paid_at).toLocaleDateString("es-CO")}`
+                          : ""}
+                      </p>
+                    </div>
+                    {inv.status === "pagada" ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                        Pagada
+                      </span>
+                    ) : (
+                      <form action={markInvoicePaidAdmin}>
+                        <input type="hidden" name="invoice_id" value={inv.id} />
+                        <input type="hidden" name="tenant_id" value={t.id} />
+                        <button
+                          type="submit"
+                          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                        >
+                          Marcar pagada
+                        </button>
+                      </form>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <p className="mt-2 text-[11px] text-neutral-400">
+            «Marcar pagada» en una renovación: contador a 0, corte = hoy + 1 mes y aplica
+            el cambio de plan programado si lo hay. En un adicional: solo registra el pago.
+          </p>
+        </div>
       </Card>
 
       <Card title="Conexión Shopify (OAuth)">

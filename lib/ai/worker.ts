@@ -16,7 +16,7 @@ import { createAdminClient } from "../supabase/admin";
 import { runAssistant, type AssistantResult, type Content, type GeminiPart } from "./gemini";
 import { escalateToHuman } from "./escalation";
 import { logEvent, summarizeToolTrace, type EventKind } from "../ops/events";
-import { sendTelegramAlert, escTelegram } from "../notify/telegram";
+import { processBillingOnMessage } from "../billing-cycle";
 import {
   sendText,
   sendAudio,
@@ -410,31 +410,16 @@ export async function processInboundMessage(params: {
   if (counterError) {
     console.error(`[worker] increment_message_counter falló:`, counterError.message);
   }
-  // Alertas al Telegram del dueño por CRUCE exacto (una vez por periodo, sin
-  // dedup extra: el contador solo pasa por cada valor una vez). El umbral del
-  // 80% replica el `(v_limit*0.8)::int` de la función SQL (redondeo).
+  // Ciclo de facturación (lib/billing-cycle): genera factura del adicional al
+  // agotar el plan (si el tenant lo tiene activado), la de renovación al 80%
+  // del ciclo, alerta por Telegram en los cruces y decide si el bot responde.
+  // Agotado plan + adicional sin pago registrado → pausa (palanca de cobro).
   if (counter) {
-    const limit = counter.message_limit;
-    if (counter.current_count === limit + 1) {
-      await sendTelegramAlert(
-        `🔴 <b>${escTelegram(tenant.name)}</b> llegó a su límite (${limit.toLocaleString(
-          "es-CO"
-        )} mensajes): su bot DEJÓ de responder. Cobrar/ampliar ya.`
-      );
-    } else if (counter.current_count === Math.round(limit * 0.8)) {
-      await sendTelegramAlert(
-        `🟠 <b>${escTelegram(tenant.name)}</b> cruzó el 80% de su plan (${counter.current_count.toLocaleString(
-          "es-CO"
-        )}/${limit.toLocaleString("es-CO")} mensajes) — momento de ofrecer la recarga.`
-      );
+    const billing = await processBillingOnMessage(tenant, counter);
+    if (!billing.allowed) {
+      console.warn(`[worker] tenant ${tenant.id} agotó su ciclo de mensajes; no respondo.`);
+      return;
     }
-  }
-  if (counter?.over_limit) {
-    console.warn(`[worker] tenant ${tenant.id} superó el límite de mensajes; no respondo.`);
-    return;
-  }
-  if (counter?.at_80_percent) {
-    console.warn(`[worker] tenant ${tenant.id} al 80% del límite mensual.`);
   }
 
   // 6) Construir historial → correr el asesor.

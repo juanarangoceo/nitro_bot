@@ -15,15 +15,28 @@ import {
 } from "@/lib/billing";
 
 export default async function PlanPage() {
-  const { tenant, role } = await getDashboardContext();
+  const { tenant, role, supabase } = await getDashboardContext();
   if (role !== "admin") redirect("/dashboard");
   if (tenant.modules?.plan === false) redirect("/dashboard");
 
   const used = tenant.current_month_messages;
   const limit = tenant.message_limit || 1;
-  const pct = Math.min(100, Math.round((used / limit) * 100));
+  // Con el adicional automático, el ciclo real es plan + 2.000 (entra solo al
+  // agotar el plan; genera factura pendiente).
+  const addonOn = tenant.addon_enabled === true && tenant.addon_price != null;
+  const effective = addonOn ? limit + ADDON_MESSAGES : limit;
+  const inAddon = addonOn && used > limit;
+  const pct = Math.min(100, Math.round((used / effective) * 100));
   const billing = billingInfo(tenant);
   const paid = billing.status === "pagado";
+
+  // Facturas del cliente (RLS: solo las suyas), las últimas primero.
+  const { data: invoiceRows } = await supabase
+    .from("invoices")
+    .select("id, concept, amount, status, created_at, paid_at")
+    .order("created_at", { ascending: false })
+    .limit(12);
+  const invoices = invoiceRows ?? [];
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -63,14 +76,14 @@ export default async function PlanPage() {
         <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-neutral-100">
           <div
             className={`h-full rounded-full ${
-              used >= limit ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : "bg-neutral-900"
+              used >= effective ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : "bg-neutral-900"
             }`}
             style={{ width: `${pct}%` }}
           />
         </div>
         <p className="mt-2 text-xs text-neutral-500">
-          {used.toLocaleString("es-CO")} de {limit.toLocaleString("es-CO")} mensajes usados este
-          mes.
+          {used.toLocaleString("es-CO")} de {effective.toLocaleString("es-CO")} mensajes usados
+          en este ciclo{inAddon ? " (tu plan se agotó: estás usando el paquete adicional)" : ""}.
         </p>
         <p className="mt-3 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">
           El pago se realiza en la <strong>fecha de corte</strong> o al{" "}
@@ -106,6 +119,48 @@ export default async function PlanPage() {
                 billing.dueDate
               )}. Realiza el pago para no perder el funcionamiento del asistente.`}
         </p>
+      </section>
+
+      <section className="rounded-2xl border border-neutral-200 bg-white p-6">
+        <h2 className="text-sm font-semibold text-neutral-900">Tus facturas</h2>
+        {invoices.length === 0 ? (
+          <p className="mt-3 text-sm text-neutral-400">
+            Aún no tienes facturas. Se generan automáticamente al acercarse tu fecha de corte
+            o al consumir tu plan.
+          </p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {invoices.map((inv) => (
+              <li
+                key={inv.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm"
+              >
+                <div>
+                  <span className="text-neutral-800">
+                    {inv.concept === "renovacion"
+                      ? "Renovación del plan"
+                      : `Paquete adicional (${ADDON_MESSAGES.toLocaleString("es-CO")} mensajes)`}
+                  </span>
+                  <span className="ml-2 font-medium text-neutral-900">
+                    {formatCop(inv.amount)}
+                  </span>
+                  <p className="text-[11px] text-neutral-400">
+                    {new Date(inv.created_at).toLocaleDateString("es-CO")}
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    inv.status === "pagada"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-amber-100 text-amber-700"
+                  }`}
+                >
+                  {inv.status === "pagada" ? "Pagada" : "Pendiente"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="rounded-2xl border border-neutral-200 bg-white p-6">
