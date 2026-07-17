@@ -5,6 +5,7 @@
 
 import { createAdminClient } from "../supabase/admin";
 import { searchProducts } from "./rag";
+import { logSearch } from "./search-log";
 import { escalateToHuman } from "./escalation";
 import { createCodOrder, type OrderItem, type CustomerData } from "../shopify/orders";
 import { resolveDepartment } from "../shopify/colombia";
@@ -219,7 +220,20 @@ function resumir(desc: string | null): string | null {
 }
 
 async function buscarProductos(ctx: ToolContext, args: Args) {
-  const productos = await searchProducts(ctx.tenant.id, String(args.consulta ?? ""), 5);
+  const consulta = String(args.consulta ?? "");
+  const productos = await searchProducts(ctx.tenant.id, consulta, 5);
+  // Demanda de búsqueda para el módulo «Búsquedas» (best-effort, jamás lanza).
+  // El probador de /admin no contamina la demanda real.
+  if (!ctx.testMode) {
+    await logSearch({
+      tenantId: ctx.tenant.id,
+      conversationId: ctx.conversationId,
+      kind: "search",
+      query: consulta,
+      resultCount: productos.length,
+      topSimilarity: productos[0]?.similarity ?? null,
+    });
+  }
   return {
     productos: productos.map((p) => ({
       id: p.shopify_id,
@@ -240,6 +254,15 @@ async function verDetalleProducto(ctx: ToolContext, args: Args) {
     .eq("tenant_id", ctx.tenant.id)
     .eq("shopify_id", String(args.producto_id))
     .maybeSingle();
+  if (!ctx.testMode) {
+    await logSearch({
+      tenantId: ctx.tenant.id,
+      conversationId: ctx.conversationId,
+      kind: "detail",
+      productShopifyId: String(args.producto_id),
+      resultCount: data ? 1 : 0,
+    });
+  }
   if (!data) return { encontrado: false };
   const disponible = data.status === "active";
   // Cap de la ficha: una descripción enorme infla el input de TODAS las rondas

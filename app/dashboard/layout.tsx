@@ -20,6 +20,9 @@ export default async function DashboardLayout({
       ? [{ href: "/dashboard/conversations", label: "Conversaciones" }]
       : []),
     ...(mod.metrics !== false ? [{ href: "/dashboard/metrics", label: "Métricas" }] : []),
+    ...(mod.searches !== false
+      ? [{ href: "/dashboard/searches", label: "Búsquedas" }]
+      : []),
     ...(mod.crm !== false ? [{ href: "/dashboard/crm", label: "CRM" }] : []),
     ...(mod.requests !== false
       ? [{ href: "/dashboard/requests", label: "Solicitudes" }]
