@@ -7,6 +7,12 @@
 // tenants.addon_price).
 export const ADDON_MESSAGES = 2000;
 
+// Vigencia del adicional MIENTRAS SU FACTURA SIGA PENDIENTE: pasados estos
+// días sin registrar el pago, el bot se pausa aunque queden mensajes (el
+// adicional es un puente de cobro, no un mini-plan). Con la factura pagada
+// no hay vencimiento: manda solo el tope de mensajes.
+export const ADDON_PENDING_DAYS = 15;
+
 // Datos de pago de la plataforma (a donde el cliente consigna la mensualidad).
 export const PAYMENT_HOLDER = "Juan Arango · C.C. 1.088.018.943";
 export const PAYMENT_METHODS = [
