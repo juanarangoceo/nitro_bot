@@ -739,13 +739,26 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     contra el total del ciclo, «estás usando el paquete adicional», lista de
     facturas con estado).
 
+- **Sesión 2026-07-17 (bis) — vencimiento del adicional + rescate de Elegance
+  (merge 189af77)**: el adicional con factura PENDIENTE vence a los 15 días
+  (`ADDON_PENDING_DAYS` en lib/billing.ts) y el bot se pausa aunque queden
+  mensajes; PAGADA no vence (manda solo el tope de 2.000). Caso real: Elegance
+  agotó sus 5.000 pagados con `addon_enabled` APAGADO → bot pausado → Juan usó
+  «Marcar pagada» en la renovación de $480k para despausar → el sistema
+  (correctamente) regaló ciclo nuevo. Restaurado a mano (script + audit_log):
+  ciclo del 12-jul, contador 5003, renovación $480k PENDIENTE, adicional
+  $120k PENDIENTE (generado por el flujo real), addon ON, bot respondiendo.
+  **REGLA para Juan: «Marcar pagada» en una renovación SOLO cuando el cliente
+  pagó de verdad — resetea el ciclo.** Verificado 5/5 vencimiento + 13/13
+  regresión.
+
 ### 🔜 Pendiente
-- **Activar el ciclo de facturación de Elegance (2026-07-17)**: en /admin →
-  Elegance: poner fecha de corte real, mensualidad y precio del adicional, y
-  encender «Adicional automático» si aplica. OJO: al poner fecha de corte el
-  tenant SALE del reseteo mensual del día 1 — su contador solo se reinicia al
-  marcar pagada una renovación (o con «Reiniciar contador»). Vigilar el primer
-  ciclo completo: factura al 80% o a 10 días del corte → pago → reset.
+- **Vigilar el ciclo de Elegance (facturación activa desde 2026-07-17)**:
+  contador en ~5.003/7.000 (adicional en uso), renovación $480k y adicional
+  $120k pendientes, corte 2026-08-12. Al pago real del cliente: «Marcar
+  pagada» la renovación (resetea a 5.000 nuevos) y la del adicional. Si en 15
+  días (~01-ago) no ha pagado el adicional, el bot se pausa solo. Confirmar
+  además que el cron diario `/api/cron/billing` corrió (Vercel, 11:00 UTC).
 - **Post-deploy specs A-D (2026-07-17)**: (1) poner NOMBRE a los usuarios de
   Elegance desde /admin → detalle del cliente; (2) responder un ticket real y
   ver «{nombre} · hora» en la burbuja; (3) login con un agente real y
