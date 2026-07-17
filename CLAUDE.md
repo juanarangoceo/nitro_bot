@@ -751,6 +751,15 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   **REGLA para Juan: «Marcar pagada» en una renovación SOLO cuando el cliente
   pagó de verdad — resetea el ciclo.** Verificado 5/5 vencimiento + 13/13
   regresión.
+  - **(quinquies) Pago anticipado programado (merge 394cd2d)**: «Marcar
+    pagada» una renovación con créditos vivos ya NO resetea al instante — el
+    pago queda PROGRAMADO (detección: invoice renovacion pagada con
+    cycle_start del ciclo vigente) y el ciclo nuevo arranca solo al agotar
+    los créditos (worker; el mensaje que cruza cuenta en el ciclo nuevo) o al
+    llegar el corte (`activateDueRenewals` en el cron diario), lo primero;
+    corte = arranque + 1 mes, aplica pending_plan. Bot ya pausado/corte
+    vencido → reset inmediato. Así el cliente no pierde mensajes pagados del
+    adicional. Verificado 6/6 + 14/14 regresión.
   - **(quater) Vencimiento por factura (migración #27, merge 24c7a9a)**:
     `invoices.due_date` — renovación nace con el corte del tenant (etiqueta
     «próximo ciclo» mientras esté pendiente), adicional con emisión+15 días;
