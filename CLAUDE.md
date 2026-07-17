@@ -751,6 +751,16 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   **REGLA para Juan: «Marcar pagada» en una renovación SOLO cuando el cliente
   pagó de verdad — resetea el ciclo.** Verificado 5/5 vencimiento + 13/13
   regresión.
+  - **(ter) Contador consciente del adicional (merge 3700558)**: Juan repitió
+    el «Marcar pagada» porque el contador mostraba «5.004/5.000 sin créditos
+    🚫» estando en la fase VÁLIDA del adicional. Fix: lista de /admin, detalle
+    del cliente, /admin/summary, Inicio del dashboard y pie de Métricas
+    muestran el consumo contra el total del ciclo (plan+2.000 si el adicional
+    está ON) con «adicional en uso 🟠»; «sin créditos 🚫» solo al agotar el
+    total. «Marcar pagada» pide confirmación (client component
+    `mark-paid-button.tsx`) explicando el reset. Elegance restaurado por 2ª
+    vez (contador 5.004, ciclo 12-jul, corte 12-ago, renovación $480k
+    PENDIENTE).
 
 ### 🔜 Pendiente
 - **Vigilar el ciclo de Elegance (facturación activa desde 2026-07-17)**:
