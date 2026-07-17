@@ -37,6 +37,16 @@ async function ensureInvoice(
   amount: number
 ): Promise<{ created: boolean; status: string; createdAt: string }> {
   const admin = createAdminClient();
+  // Vencimiento visible en /admin y en el Plan del cliente: la renovación
+  // vence en el corte del tenant (cubre el próximo ciclo); el adicional, a
+  // los 15 días de generarse (la ventana que pausa el bot si sigue pendiente).
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  let dueDate: string | null = tenant.billing_due_date;
+  if (concept === "adicional") {
+    const d = new Date(`${today}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + ADDON_PENDING_DAYS);
+    dueDate = d.toISOString().slice(0, 10);
+  }
   const { data: inserted, error } = await admin
     .from("invoices")
     .insert({
@@ -44,6 +54,7 @@ async function ensureInvoice(
       concept,
       amount,
       cycle_start: tenant.counter_period_start,
+      due_date: dueDate,
     })
     .select("status, created_at")
     .single();

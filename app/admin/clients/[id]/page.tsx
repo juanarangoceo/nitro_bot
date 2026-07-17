@@ -89,7 +89,7 @@ export default async function ClientDetailPage({
   // Facturas del tenant (renovaciones y adicionales), las últimas primero.
   const { data: invoiceRows } = await admin
     .from("invoices")
-    .select("id, concept, amount, status, cycle_start, created_at, paid_at")
+    .select("id, concept, amount, status, cycle_start, created_at, paid_at, due_date")
     .eq("tenant_id", id)
     .order("created_at", { ascending: false })
     .limit(24);
@@ -381,7 +381,7 @@ export default async function ClientDetailPage({
             </p>
           );
         })()}
-        <form action={updateTenantBilling} className="grid gap-3 sm:grid-cols-3">
+        <form action={updateTenantBilling} className="grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="tenant_id" value={t.id} />
           <label className="block">
             <span className="text-xs font-medium text-neutral-600">Fecha de corte</span>
@@ -392,17 +392,8 @@ export default async function ClientDetailPage({
               className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
             />
           </label>
-          <label className="block">
-            <span className="text-xs font-medium text-neutral-600">Estado del pago</span>
-            <select
-              name="billing_status"
-              defaultValue={t.billing_status ?? "pagado"}
-              className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
-            >
-              <option value="pagado">Pagado</option>
-              <option value="pendiente">Pendiente</option>
-            </select>
-          </label>
+          {/* El estado del pago ya NO se edita a mano: lo derivan las facturas
+              (pendiente si hay alguna sin pagar; pagado si no queda ninguna). */}
           <label className="block">
             <span className="text-xs font-medium text-neutral-600">
               Adicional {ADDON_MESSAGES.toLocaleString("es-CO")} msgs (COP; vacío = no ofrecer)
@@ -415,7 +406,7 @@ export default async function ClientDetailPage({
               className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
             />
           </label>
-          <div className="sm:col-span-3">
+          <div className="sm:col-span-2">
             <input type="hidden" name="addon_enabled_present" value="1" />
             <label className="flex items-center gap-2 text-sm text-neutral-700">
               <input
@@ -451,7 +442,6 @@ export default async function ClientDetailPage({
           ) : (
             <ul className="space-y-2">
               {invoices.map((inv) => {
-                const isCurrentCycle = inv.cycle_start === t.counter_period_start;
                 return (
                   <li
                     key={inv.id}
@@ -460,13 +450,15 @@ export default async function ClientDetailPage({
                     <div>
                       <span className="font-medium text-neutral-800">
                         {inv.concept === "renovacion"
-                          ? "Renovación del plan"
+                          ? `Renovación del plan${inv.status === "pendiente" ? " (próximo ciclo)" : ""}`
                           : `Adicional ${ADDON_MESSAGES.toLocaleString("es-CO")} msgs`}
                       </span>
                       <span className="ml-2 text-neutral-600">{formatCop(inv.amount)}</span>
                       <p className="text-[11px] text-neutral-400">
-                        {new Date(inv.created_at).toLocaleDateString("es-CO")}
-                        {isCurrentCycle ? " · ciclo actual" : ""}
+                        emitida {new Date(inv.created_at).toLocaleDateString("es-CO")}
+                        {inv.due_date
+                          ? ` · ${inv.concept === "renovacion" ? "corte" : "vence"} ${formatDueDate(inv.due_date)}`
+                          : ""}
                         {inv.paid_at
                           ? ` · pagada el ${new Date(inv.paid_at).toLocaleDateString("es-CO")}`
                           : ""}
