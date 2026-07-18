@@ -855,6 +855,23 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     si no, extrae el token de `/checkouts/ac|cn/{token}` SOLO si el host
     calza con la base (tienda dev → null → expired, igual que antes). 9/9
     casos verificados con las URLs reales.
+  - **Desplegado y VERIFICADO en producción**: merge `ffd03f9`, health OK.
+    Los 3 checkouts expirados por el bug se revivieron a mano (script
+    desechable) y el cron de las 14:15 UTC les envió `carrito_recordatorio_1`
+    (3 `wa_template_usage` con wamid).
+  - **Fallos de entrega de WhatsApp ahora visibles (commit `fa9a803`)**: la
+    Cloud API acepta el envío (devuelve wamid) aunque no pueda entregar; el
+    fallo llega después como status `failed` que el webhook ignoraba. Ahora
+    `extractFailedStatuses` + `event_log` kind **`wa_delivery_failure`**
+    (warning, con recipient y errores de Meta) — visible en /admin/health.
+    Caso real que lo motivó: recordatorio de carrito al número de prueba
+    3150259785 "salió" pero no llegó → reenvío diagnóstico capturó **error
+    131049** ("not delivered to maintain healthy ecosystem engagement") =
+    límite de frecuencia de PLANTILLAS DE MARKETING por usuario de Meta, no
+    un bug. Afecta a números SIN engagement previo con el negocio (el número
+    de prueba de Juan +573146681896 sí recibe: ya chatea con el bot). Es
+    política de Meta: compradores reales que ya escriben por WhatsApp tienen
+    mejor entregabilidad; vigilar `wa_delivery_failure` los primeros días.
 
 ### 🔜 Pendiente
 - **Activar carritos abandonados para Elegance (Spec 13, post-deploy)**:
