@@ -18,6 +18,8 @@ export const REQUIRED_SCOPES = [
   "write_orders",
   "read_customers",
   "write_customers",
+  // Carritos abandonados (Spec 13): webhooks checkouts/create|update.
+  "read_checkouts",
 ] as const;
 
 export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutos

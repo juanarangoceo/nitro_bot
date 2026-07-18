@@ -29,6 +29,8 @@ import {
   type DownloadedMedia,
 } from "../whatsapp/meta";
 import { synthesizeSpeech } from "./tts";
+import { detectOptOut, applyOptOut, OPTOUT_CONFIRMATION } from "../carts/optout";
+import { formatCop } from "../billing";
 import { env } from "../env";
 import { uploadWaMedia, downloadWaMedia } from "../storage";
 import type { Tenant, TenantSecrets } from "../tenant";
@@ -346,6 +348,32 @@ export async function processInboundMessage(params: {
 
   await markAsRead(wa, message.id);
 
+  // Opt-out de marketing («Escribe BAJA…», pie de las plantillas de carrito
+  // abandonado): respuesta FIJA server-side, sin IA ni contador. Solo aplica
+  // si el tenant tiene el módulo de carritos (su único marketing saliente).
+  // Bloquea SOLO promocionales: si vuelve a escribir, el asesor responde normal.
+  if (
+    tenant.abandoned_carts_enabled === true &&
+    shaped.msgType === "text" &&
+    detectOptOut(shaped.content)
+  ) {
+    await applyOptOut({ tenantId: tenant.id, phone, conversationId });
+    try {
+      const outboundId = await sendText(wa, phone, OPTOUT_CONFIRMATION);
+      await supabase.from("messages").insert({
+        tenant_id: tenant.id,
+        conversation_id: conversationId,
+        wa_message_id: outboundId,
+        sender: "bot",
+        msg_type: "text",
+        content: OPTOUT_CONFIRMATION,
+      });
+    } catch (e) {
+      console.error("[worker] confirmación de opt-out falló:", e);
+    }
+    return;
+  }
+
   // Descarga de media (audio/imagen) para el turno multimodal actual.
   const media = shaped.mediaId ? await downloadMedia(wa, shaped.mediaId) : null;
 
@@ -506,6 +534,35 @@ export async function processInboundMessage(params: {
     !!env.MISTRAL_API_KEY &&
     !!(tenant.voice_id ?? env.MISTRAL_VOICE_ID);
 
+  // Contexto de carrito abandonado (Spec 13): si a este comprador se le envió
+  // un recordatorio en los últimos 7 días, el asesor lo sabe y retoma esa
+  // venta con naturalidad. Una consulta extra SOLO para tenants con el módulo.
+  let cartContext: string | undefined;
+  if (tenant.abandoned_carts_enabled === true) {
+    const { data: cart } = await supabase
+      .from("abandoned_checkouts")
+      .select("line_items, total_price")
+      .eq("tenant_id", tenant.id)
+      .eq("phone", phone)
+      .in("status", ["reminded_1", "reminded_2"])
+      .gte("reminder_1_sent_at", new Date(Date.now() - 7 * 24 * 3_600_000).toISOString())
+      .order("last_activity_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (cart) {
+      const items = ((cart.line_items ?? []) as { title?: string }[])
+        .map((li) => li.title)
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(", ");
+      cartContext =
+        `NOTA DEL TURNO: a este cliente se le envió un recordatorio de carrito abandonado` +
+        (items ? ` con ${items}` : "") +
+        (cart.total_price ? ` por ${formatCop(Number(cart.total_price))}` : "") +
+        ". Si su mensaje se relaciona con eso, retoma esa venta con naturalidad (no repitas el recordatorio).";
+    }
+  }
+
   const VOICE_TURN_INSTRUCTION =
     "NOTA DEL TURNO: el cliente envió una nota de voz y tu respuesta se convertirá en AUDIO con tu voz. " +
     "Responde en MÁXIMO 2 frases (~45 palabras), lenguaje hablado natural, directo al punto, con tu mismo tono. " +
@@ -521,7 +578,10 @@ export async function processInboundMessage(params: {
       shopify,
       wa,
       customerPhone: phone,
-      extraSystem: voiceTurn ? VOICE_TURN_INSTRUCTION : undefined,
+      extraSystem:
+        [voiceTurn ? VOICE_TURN_INSTRUCTION : null, cartContext ?? null]
+          .filter(Boolean)
+          .join("\n\n") || undefined,
       contents,
     });
   } catch (e) {

@@ -780,7 +780,74 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     vez (contador 5.004, ciclo 12-jul, corte 12-ago, renovación $480k
     PENDIENTE).
 
+- **Sesión 2026-07-18 — Spec 13: Carritos abandonados (rama
+  `feature/abandoned-carts`, migración #28 aplicada; typecheck/build/verify
+  4/4 + 14/14 checks DB + envío REAL de plantilla verificado)**: recuperación
+  por WhatsApp con plantillas de marketing de Meta. Facturable (Fase 4),
+  acordado con Elegance. Verificado por API: plantillas
+  `carrito_recordatorio_1/2` AMBAS aprobadas en la WABA, idioma **`es_CO`**,
+  botón URL base `https://elegancecolombia.com/checkouts/cn/` + sufijo.
+  - **Migración #28**: `abandoned_checkouts` (unique `(tenant_id,
+    checkout_token)`, estados SOLO adelante pending→reminded_1→reminded_2→
+    recovered/cancelled/opted_out/expired, `last_activity_at` como reloj,
+    `recovered_shopify_order_id` TEXT — NO FK a orders: las compras web no
+    existen localmente; RLS lectura tenant, escritura service_role patrón
+    0018/0025), `customers.marketing_opt_out`,
+    `tenants.abandoned_carts_enabled` (default OFF) + `cart_settings` jsonb
+    (defaults en `lib/carts/settings.ts`: delays [60,1440] min, nombres de
+    plantilla, idioma es_CO, `checkout_url_base` — VACÍA = cron no envía).
+  - **Ingesta** (`lib/carts/checkouts.ts`): topics nuevos `CHECKOUTS_CREATE/
+    UPDATE` + `ORDERS_CREATE` en el MISMO route/HMAC (switch por topic;
+    registro por-topic con "failed" sin tumbar los demás — YA registrados en
+    Shopify dev). Sin teléfono se ignora; cada update reprograma el reloj;
+    `completed_at` u orders/create cierran (recovered si hubo recordatorio,
+    cancelled si no; match por checkout_token y fallback teléfono 7d).
+    orders/create también captura ventas cerradas por el BOT.
+  - **Envío** (`lib/carts/reminders.ts` + cron `/api/cron/cart-reminders`
+    cada 15 min — plan Pro confirmado): ventana 8:00-20:00 Bogotá en código,
+    máx 2/checkout, 1/comprador/día (varios vencidos del mismo teléfono: gana
+    el más reciente, resto expired), opt-out, "no molestar" si conversación
+    escalada o sesión <24h (posterga), doble check de orden local, URL debe
+    empezar EXACTO por la base (mismatch → expired + event_log), fallo de
+    Meta → 1 reintento → expired. Variables server-side (nombre "de nuevo"
+    como fallback, producto + "y N más", total formatCop). `sendTemplate`
+    nuevo en `lib/whatsapp/meta.ts`. Cada envío inserta el mensaje en la
+    conversación (get-or-create sin pisar estado) y telemetría `event_log`
+    kind **`wa_template_usage`** (unit_cost_usd 0.0144 — fuente de verdad de
+    facturación del módulo).
+  - **Worker**: opt-out «BAJA» server-side ANTES de la IA (palabra exacta o
+    frase en ≤12 palabras, `lib/carts/optout.ts`; respuesta fija, cero
+    tokens/contador, kind `cart_optout`; solo tenants con módulo ON) +
+    contexto de carrito vía `extraSystem` cuando el comprador con recordatorio
+    (7d) escribe. `normalizeCoPhone` exportado de orders.ts (mismo E.164).
+  - **UI**: `/dashboard/carts` (nav «Carritos» solo con
+    `abandoned_carts_enabled` + `modules.carts !== false`; 3 contadores +
+    tabla, filtro fechas Bogotá, solo lectura) y card «Carritos abandonados»
+    en /admin (toggle + url base + delays + plantillas + idioma, action
+    `updateCartSettings` auditada). OAuth: scope `read_checkouts` agregado.
+  - **Verificado**: 14/14 (ingesta E.164/reloj/terminales, cierre por token y
+    teléfono, optout 10 casos, RLS 3 checks 42501, settings merge) + plantilla
+    REAL entregada al número de prueba (wamid OK, es_CO, botón con sufijo).
+  - **OJO**: los webhooks de checkout ya apuntan a producción; hasta el deploy
+    el código viejo los procesa como producto inexistente (delete no-op
+    inofensivo). El módulo queda OFF por defecto para todos.
+
 ### 🔜 Pendiente
+- **Activar carritos abandonados para Elegance (Spec 13, post-deploy)**:
+  (1) en /admin → detalle → card «Carritos abandonados»: encender el toggle y
+  poner la base `https://elegancecolombia.com/checkouts/cn/` (sin base el cron
+  NO envía); (2) e2e real: abandonar un checkout con teléfono en la tienda →
+  fila `pending` en /dashboard/carts → a los ~60 min (en ventana 8-20 Bogotá)
+  llega la plantilla → responder «BAJA» debe contestar el texto fijo y marcar
+  `opted_out`; (3) confirmar en el admin de Shopify de Elegance que la
+  automatización NATIVA de correos de checkout abandonado está apagada (a
+  17-jul los checkouts decían correo "No enviado") — si está activa es
+  decisión comercial canal único o doble; (4) revisar `wa_template_usage` en
+  event_log como base de facturación del módulo y vigilar el quality rating
+  del número en Meta los primeros días; (5) OJO: la tienda DEV
+  (`.myshopify.com`) nunca va a calzar con la base de producción — para
+  probar desde la tienda dev, poner temporalmente su dominio como base (el
+  link del botón saldrá roto a propósito, apunta al dominio real).
 - **Vigilar el ciclo de Elegance (facturación activa desde 2026-07-17)**:
   contador en ~5.003/7.000 (adicional en uso), renovación $480k y adicional
   $120k pendientes, corte 2026-08-12. Al pago real del cliente: «Marcar
@@ -900,6 +967,12 @@ app/api/webhooks/shopify/route.ts   webhook catálogo (HMAC + after())
 app/api/webhooks/meta/route.ts      webhook WhatsApp (handshake + firma + encola)
 app/api/cron/reset-counters/route.ts  cron mensual del contador (CRON_SECRET)
 app/api/cron/reminders/route.ts     cron horario de recordatorios (CRON_SECRET)
+app/api/cron/cart-reminders/route.ts  cron 15min carritos abandonados (CRON_SECRET)
+lib/carts/settings.ts               config del módulo por tenant (cart_settings + defaults)
+lib/carts/checkouts.ts              ingesta webhooks checkouts/* + cierre por orders/create
+lib/carts/reminders.ts              barrido de plantillas (reglas duras + telemetría)
+lib/carts/optout.ts                 detección/aplicación de «BAJA» (marketing opt-out)
+app/dashboard/carts/page.tsx        módulo «Carritos» del cliente (solo lectura)
 app/api/health/route.ts             health check (app + DB)
 app/api/dev/chat/route.ts           endpoint interno de prueba del asesor (dev)
 lib/queue.ts                        cola de fondo (after() hoy, QStash después)

@@ -1,11 +1,24 @@
-// Registro (idempotente) de los webhooks de catálogo de Shopify para un tenant.
+// Registro (idempotente) de los webhooks de Shopify para un tenant.
 // Compartido por scripts/register-shopify-webhooks.ts y el panel. Solo registra
-// los topics que el route sabe manejar (products/create|update|delete).
+// los topics que el route sabe manejar: catálogo (products/*) y carritos
+// abandonados (checkouts/* + orders/create, Spec 13).
+//
+// OJO scopes: CHECKOUTS_* exige read_checkouts y ORDERS_CREATE read_orders en
+// la app del tenant. Si un topic falla por permisos, se reporta como "failed"
+// SIN tumbar el registro de los demás (los tenants sin el módulo de carritos
+// igual pueden operar solo con products/*).
 
 import { getTenantBySlug } from "../tenant";
 import { shopifyGraphQL, type ShopifyCreds } from "../shopify/client";
 
-const TOPICS = ["PRODUCTS_CREATE", "PRODUCTS_UPDATE", "PRODUCTS_DELETE"] as const;
+const TOPICS = [
+  "PRODUCTS_CREATE",
+  "PRODUCTS_UPDATE",
+  "PRODUCTS_DELETE",
+  "CHECKOUTS_CREATE",
+  "CHECKOUTS_UPDATE",
+  "ORDERS_CREATE",
+] as const;
 
 type HttpSub = { id: string; topic: string; callbackUrl: string | null };
 type UserErrors = { userErrors: { field: string[] | null; message: string }[] };
@@ -75,11 +88,12 @@ async function updateSub(creds: ShopifyCreds, id: string, callbackUrl: string) {
   if (errs.length) throw new Error(errs.map((e) => e.message).join("; "));
 }
 
-// Registra/actualiza los 3 topics. Devuelve un resumen por topic.
+// Registra/actualiza los topics. Devuelve un resumen por topic; un fallo en un
+// topic (p.ej. scope faltante) no impide los demás.
 export async function registerShopifyWebhooks(
   slug: string,
   baseUrl: string
-): Promise<{ topic: string; action: "created" | "updated" | "exists" }[]> {
+): Promise<{ topic: string; action: "created" | "updated" | "exists" | "failed"; error?: string }[]> {
   const callbackUrl = shopifyWebhookUrl(baseUrl);
   const r = await getTenantBySlug(slug);
   if (!r) throw new Error(`tenant "${slug}" no encontrado`);
@@ -92,17 +106,22 @@ export async function registerShopifyWebhooks(
   };
 
   const existing = await listExisting(creds);
-  const out: { topic: string; action: "created" | "updated" | "exists" }[] = [];
+  const out: { topic: string; action: "created" | "updated" | "exists" | "failed"; error?: string }[] =
+    [];
   for (const topic of TOPICS) {
-    const match = existing.find((s) => s.topic === topic);
-    if (!match) {
-      await createSub(creds, topic, callbackUrl);
-      out.push({ topic, action: "created" });
-    } else if (match.callbackUrl !== callbackUrl) {
-      await updateSub(creds, match.id, callbackUrl);
-      out.push({ topic, action: "updated" });
-    } else {
-      out.push({ topic, action: "exists" });
+    try {
+      const match = existing.find((s) => s.topic === topic);
+      if (!match) {
+        await createSub(creds, topic, callbackUrl);
+        out.push({ topic, action: "created" });
+      } else if (match.callbackUrl !== callbackUrl) {
+        await updateSub(creds, match.id, callbackUrl);
+        out.push({ topic, action: "updated" });
+      } else {
+        out.push({ topic, action: "exists" });
+      }
+    } catch (e) {
+      out.push({ topic, action: "failed", error: (e as Error).message });
     }
   }
   return out;

@@ -52,6 +52,67 @@ export async function sendText(
   return json?.messages?.[0]?.id ?? null;
 }
 
+// Envía una PLANTILLA aprobada de Meta (template message) — es el único tipo de
+// mensaje que puede iniciar conversación FUERA de la ventana de 24h (marketing,
+// p.ej. recordatorios de carrito abandonado). Las variables van saneadas: Meta
+// rechaza saltos de línea, tabs y 4+ espacios seguidos en los parámetros.
+// `buttonUrlParam` es el sufijo de la URL dinámica del primer botón (la base
+// fija vive en la plantilla). El código de idioma debe ser EXACTO (p.ej.
+// "es_CO"): un mismatch produce "template not found".
+export async function sendTemplate(
+  creds: WaCreds,
+  to: string,
+  template: {
+    name: string;
+    language: string;
+    bodyParams: string[];
+    buttonUrlParam?: string;
+  }
+): Promise<string | null> {
+  const clean = (s: string) => s.replace(/\s+/g, " ").trim();
+  const components: unknown[] = [];
+  if (template.bodyParams.length > 0) {
+    components.push({
+      type: "body",
+      parameters: template.bodyParams.map((p) => ({ type: "text", text: clean(p) })),
+    });
+  }
+  if (template.buttonUrlParam) {
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: template.buttonUrlParam }],
+    });
+  }
+
+  const res = await fetch(`${GRAPH_BASE}/${creds.phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${creds.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "template",
+      template: {
+        name: template.name,
+        language: { code: template.language },
+        components,
+      },
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      `Meta sendTemplate falló (${res.status}): ${JSON.stringify(json?.error ?? json)}`
+    );
+  }
+  return json?.messages?.[0]?.id ?? null;
+}
+
 // Envía una imagen al cliente. Acepta `link` (URL pública, p.ej. la imagen de
 // Shopify) o `id` (media previamente subida a Meta con uploadMedia).
 export async function sendImage(

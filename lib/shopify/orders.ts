@@ -96,7 +96,9 @@ function splitName(full: string): { first: string; last: string } {
 }
 
 // Normaliza un teléfono colombiano a E.164 (+57...) para que Shopify lo acepte.
-function normalizeCoPhone(raw: string): string {
+// Exportada: los carritos abandonados usan la MISMA normalización (el match
+// checkout↔comprador depende de que ambos lados normalicen igual).
+export function normalizeCoPhone(raw: string): string {
   const digits = (raw || "").replace(/\D/g, "");
   if (!digits) return "";
   if (digits.startsWith("57")) return "+" + digits;

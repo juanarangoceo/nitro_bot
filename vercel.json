@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/billing",
       "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/cart-reminders",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
