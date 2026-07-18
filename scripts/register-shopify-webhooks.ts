@@ -31,8 +31,14 @@ async function main() {
   const result = await registerShopifyWebhooks(slug, baseUrl);
   for (const r of result) {
     const icon =
-      r.action === "created" ? "✅ creado" : r.action === "updated" ? "♻️  actualizado" : "⏭️  ya existe";
-    console.log(`  ${icon} ${r.topic}`);
+      r.action === "created"
+        ? "✅ creado"
+        : r.action === "updated"
+          ? "♻️  actualizado"
+          : r.action === "failed"
+            ? "❌ falló"
+            : "⏭️  ya existe";
+    console.log(`  ${icon} ${r.topic}${r.error ? ` — ${r.error}` : ""}`);
   }
 
   console.log("\nListo. Edita un producto en Shopify dev para probar el sync en vivo.");

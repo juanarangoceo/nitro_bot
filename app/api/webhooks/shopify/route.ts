@@ -8,6 +8,12 @@ import crypto from "node:crypto";
 import { after } from "next/server";
 import { getTenantByShopDomain } from "@/lib/tenant";
 import { syncProductById, deleteProductById } from "@/lib/shopify/sync";
+import {
+  processCheckoutWebhook,
+  processOrderWebhook,
+  type ShopifyCheckoutPayload,
+  type ShopifyOrderPayload,
+} from "@/lib/carts/checkouts";
 
 function timingSafeEqual(a: string, b: string): boolean {
   const ba = Buffer.from(a);
@@ -45,9 +51,20 @@ export async function POST(req: Request): Promise<Response> {
   const payload = JSON.parse(raw) as { id?: number | string };
   const numericId = payload.id != null ? String(payload.id) : null;
 
-  // 200 OK ya; el trabajo pesado (fetch + embedding + upsert) va en after().
+  // 200 OK ya; el trabajo pesado va en after().
   after(async () => {
     try {
+      // Carritos abandonados (Spec 13): ingesta de checkouts y cierre por orden.
+      if (topic === "checkouts/create" || topic === "checkouts/update") {
+        await processCheckoutWebhook(tenant, payload as ShopifyCheckoutPayload);
+        return;
+      }
+      if (topic === "orders/create") {
+        await processOrderWebhook(tenant, payload as ShopifyOrderPayload);
+        return;
+      }
+
+      // Catálogo: fetch + embedding + upsert del producto.
       if (!numericId) return;
       if (topic === "products/delete") {
         await deleteProductById(tenant.id, numericId);

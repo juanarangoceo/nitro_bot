@@ -5,9 +5,11 @@ import {
   setTenantActive,
   updateTenantCommercial,
   updateTenantBilling,
+  updateCartSettings,
 } from "../../actions";
 import { MarkPaidButton } from "./mark-paid-button";
 import { ADDON_MESSAGES, billingInfo, formatCop, formatDueDate } from "@/lib/billing";
+import { cartSettings } from "@/lib/carts/settings";
 import {
   PromptEditor,
   BusinessInfoEditor,
@@ -61,7 +63,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, counter_period_start, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price, addon_enabled, pending_plan, test_phones"
+      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, counter_period_start, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price, addon_enabled, pending_plan, test_phones, abandoned_carts_enabled, cart_settings"
     )
     .eq("id", id)
     .maybeSingle();
@@ -488,6 +490,113 @@ export default async function ClientDetailPage({
             el cambio de plan programado si lo hay. En un adicional: solo registra el pago.
           </p>
         </div>
+      </Card>
+
+      <Card title="Carritos abandonados">
+        {(() => {
+          const cs = cartSettings(t);
+          return (
+            <>
+              <p className="mb-3 text-xs text-neutral-500">
+                Recuperación por WhatsApp con plantillas de marketing de Meta: máx 2
+                recordatorios por carrito, 1 por comprador/día, ventana 8:00–20:00
+                Bogotá, opt-out con «BAJA». Requiere las plantillas APROBADAS en la
+                WABA del cliente y los scopes read_checkouts/read_orders en Shopify
+                (re-correr el registro de webhooks al activar).
+                {t.abandoned_carts_enabled && !cs.checkout_url_base && (
+                  <span className="mt-1 block font-medium text-amber-600">
+                    ⚠️ Falta la base de la URL del botón: el cron NO envía hasta
+                    configurarla.
+                  </span>
+                )}
+              </p>
+              <form action={updateCartSettings} className="grid gap-3 sm:grid-cols-2">
+                <input type="hidden" name="tenant_id" value={t.id} />
+                <label className="flex items-center gap-2 sm:col-span-2">
+                  <input
+                    type="checkbox"
+                    name="abandoned_carts_enabled"
+                    defaultChecked={t.abandoned_carts_enabled === true}
+                    className="h-4 w-4 rounded border-neutral-300"
+                  />
+                  <span className="text-sm text-neutral-700">
+                    Módulo activo (captura checkouts y envía recordatorios)
+                  </span>
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-medium text-neutral-600">
+                    Base de la URL del botón (la parte FIJA de la plantilla; el sufijo
+                    del checkout viaja como variable)
+                  </span>
+                  <input
+                    name="cart_url_base"
+                    defaultValue={cs.checkout_url_base}
+                    placeholder="https://tienda.com/checkouts/cn/"
+                    className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-neutral-600">
+                    Recordatorio 1 (minutos tras el abandono)
+                  </span>
+                  <input
+                    name="cart_delay_1"
+                    type="number"
+                    min={15}
+                    defaultValue={cs.delays_minutes[0]}
+                    className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-neutral-600">
+                    Recordatorio 2 (minutos tras el abandono)
+                  </span>
+                  <input
+                    name="cart_delay_2"
+                    type="number"
+                    min={60}
+                    defaultValue={cs.delays_minutes[1]}
+                    className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-neutral-600">Plantilla 1</span>
+                  <input
+                    name="cart_template_1"
+                    defaultValue={cs.template_1}
+                    className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-neutral-600">Plantilla 2</span>
+                  <input
+                    name="cart_template_2"
+                    defaultValue={cs.template_2}
+                    className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-neutral-600">
+                    Idioma de la plantilla (código EXACTO de Meta)
+                  </span>
+                  <input
+                    name="cart_template_language"
+                    defaultValue={cs.template_language}
+                    className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                  />
+                </label>
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+                  >
+                    Guardar
+                  </button>
+                </div>
+              </form>
+            </>
+          );
+        })()}
       </Card>
 
       <Card title="Conexión Shopify (OAuth)">

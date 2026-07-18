@@ -21,7 +21,10 @@ export type EventKind =
   | "backup"
   | "support_request"
   | "video_received"
-  | "stale_reply_dropped";
+  | "stale_reply_dropped"
+  | "wa_template_usage"
+  | "cart_reminder"
+  | "cart_optout";
 
 export type EventSeverity = "info" | "warning" | "error";
 

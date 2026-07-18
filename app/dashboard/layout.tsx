@@ -23,6 +23,10 @@ export default async function DashboardLayout({
     ...(mod.searches !== false
       ? [{ href: "/dashboard/searches", label: "Búsquedas" }]
       : []),
+    // «Carritos» solo aparece para tenants con el módulo contratado.
+    ...(tenant.abandoned_carts_enabled && mod.carts !== false
+      ? [{ href: "/dashboard/carts", label: "Carritos" }]
+      : []),
     ...(mod.crm !== false ? [{ href: "/dashboard/crm", label: "CRM" }] : []),
     ...(mod.requests !== false
       ? [{ href: "/dashboard/requests", label: "Solicitudes" }]

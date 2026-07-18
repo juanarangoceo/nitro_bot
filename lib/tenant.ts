@@ -33,6 +33,9 @@ export type Tenant = {
   voice_id: string | null;
   // Números E.164 cuyas conversaciones son de prueba (no descuentan mensajes).
   test_phones: string[] | null;
+  // Carritos abandonados (Spec 13): switch + configuración (lib/carts/settings).
+  abandoned_carts_enabled: boolean;
+  cart_settings: Record<string, unknown>;
 };
 
 export type TenantSecrets = {

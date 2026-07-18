@@ -867,3 +867,43 @@ export async function rotateWaCreds(_prev: RotateState, fd: FormData): Promise<R
     return { ok: false, error: (e as Error).message };
   }
 }
+
+// ── Carritos abandonados (Spec 13): switch + configuración por tenant ───────
+export async function updateCartSettings(fd: FormData): Promise<void> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  if (!tenantId) return;
+
+  const enabled = fd.get("abandoned_carts_enabled") === "on";
+  const d1 = Number(String(fd.get("cart_delay_1") ?? "").trim());
+  const d2 = Number(String(fd.get("cart_delay_2") ?? "").trim());
+  const urlBase = String(fd.get("cart_url_base") ?? "").trim();
+  const t1 = String(fd.get("cart_template_1") ?? "").trim();
+  const t2 = String(fd.get("cart_template_2") ?? "").trim();
+  const lang = String(fd.get("cart_template_language") ?? "").trim();
+
+  // La base del botón debe ser https y terminar como prefijo real de URL.
+  if (urlBase && !/^https:\/\/[^\s]+$/.test(urlBase)) return;
+  const delay1 = Number.isFinite(d1) && d1 >= 15 ? Math.round(d1) : 60;
+  const delay2 = Number.isFinite(d2) && d2 > delay1 ? Math.round(d2) : Math.max(1440, delay1 + 60);
+
+  const cart_settings = {
+    delays_minutes: [delay1, delay2],
+    template_1: t1 || "carrito_recordatorio_1",
+    template_2: t2 || "carrito_recordatorio_2",
+    template_language: lang || "es_CO",
+    checkout_url_base: urlBase,
+  };
+  await admin
+    .from("tenants")
+    .update({ abandoned_carts_enabled: enabled, cart_settings })
+    .eq("id", tenantId);
+  await logAudit(admin, {
+    adminId,
+    action: "update_cart_settings",
+    tenantId,
+    detail: { enabled, ...cart_settings },
+  });
+  revalidatePath(`/admin/clients/${tenantId}`);
+  revalidatePath("/admin");
+}
