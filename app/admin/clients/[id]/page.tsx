@@ -6,8 +6,9 @@ import {
   updateTenantCommercial,
   updateTenantBilling,
   updateCartSettings,
+  createManualInvoice,
 } from "../../actions";
-import { MarkPaidButton } from "./mark-paid-button";
+import { DeleteManualInvoiceButton, MarkPaidButton } from "./mark-paid-button";
 import { ADDON_MESSAGES, billingInfo, formatCop, formatDueDate } from "@/lib/billing";
 import { cartSettings } from "@/lib/carts/settings";
 import {
@@ -91,7 +92,7 @@ export default async function ClientDetailPage({
   // Facturas del tenant (renovaciones y adicionales), las últimas primero.
   const { data: invoiceRows } = await admin
     .from("invoices")
-    .select("id, concept, amount, status, cycle_start, created_at, paid_at, due_date")
+    .select("id, concept, description, amount, status, cycle_start, created_at, paid_at, due_date")
     .eq("tenant_id", id)
     .order("created_at", { ascending: false })
     .limit(24);
@@ -453,8 +454,15 @@ export default async function ClientDetailPage({
                       <span className="font-medium text-neutral-800">
                         {inv.concept === "renovacion"
                           ? `Renovación del plan${inv.status === "pendiente" ? " (próximo ciclo)" : ""}`
-                          : `Adicional ${ADDON_MESSAGES.toLocaleString("es-CO")} msgs`}
+                          : inv.concept === "adicional"
+                            ? `Adicional ${ADDON_MESSAGES.toLocaleString("es-CO")} msgs`
+                            : inv.description?.trim() || "Factura manual"}
                       </span>
+                      {inv.concept === "manual" && (
+                        <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                          Manual
+                        </span>
+                      )}
                       <span className="ml-2 text-neutral-600">{formatCop(inv.amount)}</span>
                       <p className="text-[11px] text-neutral-400">
                         emitida {new Date(inv.created_at).toLocaleDateString("es-CO")}
@@ -474,11 +482,16 @@ export default async function ClientDetailPage({
                           : "Pagada"}
                       </span>
                     ) : (
-                      <MarkPaidButton
-                        invoiceId={inv.id}
-                        tenantId={t.id}
-                        concept={inv.concept}
-                      />
+                      <span className="flex items-center gap-2">
+                        <MarkPaidButton
+                          invoiceId={inv.id}
+                          tenantId={t.id}
+                          concept={inv.concept}
+                        />
+                        {inv.concept === "manual" && (
+                          <DeleteManualInvoiceButton invoiceId={inv.id} tenantId={t.id} />
+                        )}
+                      </span>
                     )}
                   </li>
                 );
@@ -487,7 +500,58 @@ export default async function ClientDetailPage({
           )}
           <p className="mt-2 text-[11px] text-neutral-400">
             «Marcar pagada» en una renovación: contador a 0, corte = hoy + 1 mes y aplica
-            el cambio de plan programado si lo hay. En un adicional: solo registra el pago.
+            el cambio de plan programado si lo hay. En un adicional o una manual: solo
+            registra el pago.
+          </p>
+        </div>
+
+        <div className="mt-6 border-t border-neutral-100 pt-4">
+          <p className="mb-2 text-xs font-medium text-neutral-700">
+            Crear factura manual (implementaciones y cobros puntuales)
+          </p>
+          <form
+            action={createManualInvoice}
+            className="grid items-end gap-3 sm:grid-cols-[1fr_150px_160px_auto]"
+          >
+            <input type="hidden" name="tenant_id" value={t.id} />
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">Descripción</span>
+              <input
+                name="description"
+                required
+                maxLength={120}
+                placeholder="Ej: Implementación módulo carritos"
+                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">Valor (COP)</span>
+              <input
+                name="amount"
+                type="number"
+                required
+                min={1}
+                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">Vence (opcional)</span>
+              <input
+                name="due_date"
+                type="date"
+                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+              />
+            </label>
+            <button
+              type="submit"
+              className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+            >
+              Crear factura
+            </button>
+          </form>
+          <p className="mt-2 text-[11px] text-neutral-400">
+            Nace pendiente y el cliente la ve de inmediato en su módulo «Plan». No toca el
+            contador ni pausa el bot: el cobro del plan sigue su ciclo normal.
           </p>
         </div>
       </Card>

@@ -205,14 +205,17 @@ export async function generateUpcomingRenewals(): Promise<string[]> {
   return invoiced;
 }
 
-// Recalcula billing_status: pagado solo si no queda ninguna factura pendiente.
+// Recalcula billing_status: pagado solo si no queda ninguna factura pendiente
+// DEL PLAN (renovación/adicional). Las manuales (0029) son cobros aparte:
+// no cambian el estado del plan ni disparan el banner de factura vencida.
 async function refreshBillingStatus(tenantId: string): Promise<void> {
   const admin = createAdminClient();
   const { count } = await admin
     .from("invoices")
     .select("id", { count: "exact", head: true })
     .eq("tenant_id", tenantId)
-    .eq("status", "pendiente");
+    .eq("status", "pendiente")
+    .neq("concept", "manual");
   await admin
     .from("tenants")
     .update({ billing_status: (count ?? 0) > 0 ? "pendiente" : "pagado" })
