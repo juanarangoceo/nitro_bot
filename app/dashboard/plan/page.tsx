@@ -34,7 +34,7 @@ export default async function PlanPage() {
   // Facturas del cliente (RLS: solo las suyas), las últimas primero.
   const { data: invoiceRows } = await supabase
     .from("invoices")
-    .select("id, concept, amount, status, created_at, paid_at, due_date")
+    .select("id, concept, description, amount, status, created_at, paid_at, due_date")
     .order("created_at", { ascending: false })
     .limit(12);
   const invoices = invoiceRows ?? [];
@@ -143,7 +143,9 @@ export default async function PlanPage() {
                   <span className="text-neutral-800">
                     {inv.concept === "renovacion"
                       ? `Renovación del plan${inv.status === "pendiente" ? " (próximo ciclo)" : ""}`
-                      : `Paquete adicional (${ADDON_MESSAGES.toLocaleString("es-CO")} mensajes)`}
+                      : inv.concept === "adicional"
+                        ? `Paquete adicional (${ADDON_MESSAGES.toLocaleString("es-CO")} mensajes)`
+                        : inv.description?.trim() || "Servicio adicional"}
                   </span>
                   <span className="ml-2 font-medium text-neutral-900">
                     {formatCop(inv.amount)}

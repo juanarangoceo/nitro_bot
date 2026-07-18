@@ -24,14 +24,30 @@ export async function closeConversation(fd: FormData): Promise<void> {
 
 // Pasar la conversación a Tickets a mano: el equipo detectó que puede
 // responder mejor que el bot. Deja la conversación en requires_human (el bot
-// se calla) y crea el ticket SIN etiqueta (lo escaló un humano, lo ve todo el
-// equipo) y sin correo de aviso (el aviso es para el equipo, que es quien lo
-// está haciendo). Desde /dashboard/tickets se responde y al resolver vuelve
-// al bot — el mismo ciclo de un escalado del asesor.
+// se calla) y crea el ticket SIN etiqueta y sin correo de aviso (el aviso es
+// para el equipo, que es quien lo está haciendo). Se puede elegir a QUIÉN va:
+// assigned_to vacío = general (lo ve todo el equipo según sus etiquetas);
+// con usuario, solo esa persona (+ el admin) lo ve — lo impone RLS (0030).
+// Desde /dashboard/tickets se responde y al resolver vuelve al bot — el mismo
+// ciclo de un escalado del asesor.
 export async function sendToTickets(fd: FormData): Promise<void> {
   const { tenant, supabase } = await getDashboardContext();
   const conversationId = String(fd.get("conversation_id") ?? "");
   if (!conversationId) return;
+
+  // El destinatario debe ser del propio tenant: se valida contra app_users
+  // (RLS app_users_team_select solo devuelve el equipo propio). Un id ajeno o
+  // inválido cae a general — la FK compuesta de 0030 lo bloquearía igual.
+  const assignedRaw = String(fd.get("assigned_to") ?? "").trim();
+  let assignedTo: string | null = null;
+  if (assignedRaw) {
+    const { data: member } = await supabase
+      .from("app_users")
+      .select("id")
+      .eq("id", assignedRaw)
+      .maybeSingle();
+    assignedTo = member?.id ?? null;
+  }
 
   // Si ya está escalada (requires_human/human_active) ya hay ticket: no-op.
   const { data: conv } = await supabase
@@ -50,6 +66,7 @@ export async function sendToTickets(fd: FormData): Promise<void> {
     conversation_id: conversationId,
     reason: "intervencion_manual",
     status: "open",
+    assigned_to: assignedTo,
   });
 
   revalidatePath("/dashboard/conversations");

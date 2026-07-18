@@ -212,17 +212,31 @@ export function ConversationsClient({
               {(selected.status === "bot_active" || selected.status === "closed") && (
                 <form
                   action={sendToTickets}
+                  className="flex items-center gap-1"
                   onSubmit={(e) => {
-                    if (
-                      !confirm(
-                        "¿Pasar esta conversación a Tickets? El asesor deja de responder y tu equipo la atiende desde Tickets; al resolverla vuelve al bot."
-                      )
-                    ) {
-                      e.preventDefault();
-                    }
+                    const sel = e.currentTarget.elements.namedItem(
+                      "assigned_to"
+                    ) as HTMLSelectElement | null;
+                    const who = sel?.value ? team[sel.value] : null;
+                    const msg = who
+                      ? `¿Pasar esta conversación a Tickets asignada a ${who}? Solo esa persona (y el administrador) la verá en Tickets. El asesor deja de responder; al resolverla vuelve al bot.`
+                      : "¿Pasar esta conversación a Tickets para todo el equipo? El asesor deja de responder y tu equipo la atiende desde Tickets; al resolverla vuelve al bot.";
+                    if (!confirm(msg)) e.preventDefault();
                   }}
                 >
                   <input type="hidden" name="conversation_id" value={selected.id} />
+                  <select
+                    name="assigned_to"
+                    defaultValue=""
+                    className="max-w-[140px] rounded-lg border border-neutral-300 px-1.5 py-1 text-xs text-neutral-700 outline-none focus:border-neutral-900"
+                  >
+                    <option value="">Todo el equipo</option>
+                    {Object.entries(team).map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="submit"
                     className="rounded-lg bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-neutral-800"

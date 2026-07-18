@@ -5,9 +5,10 @@ export default async function TicketsPage() {
   const { supabase, user, role } = await getDashboardContext();
 
   // Etiquetas del agente: filtran su bandeja. Solo el admin ve todo; un agente
-  // ve los tickets de sus etiquetas + los «Sin etiqueta» (visibles para todo
-  // el equipo). Sin etiquetas asignadas ve únicamente los sin etiqueta. La
-  // misma regla la impone RLS (0024) — este filtro es defensa en profundidad.
+  // ve los tickets ASIGNADOS a él + los generales (assigned_to null) de sus
+  // etiquetas o «Sin etiqueta». Un ticket asignado a otro usuario no aparece.
+  // La misma regla la impone RLS (0024/0030) — este filtro es defensa en
+  // profundidad.
   let labelIds: string[] = [];
   if (role === "agent") {
     const { data } = await supabase
@@ -20,15 +21,16 @@ export default async function TicketsPage() {
   let query = supabase
     .from("tickets")
     .select(
-      "id, reason, created_at, conversation_id, label_id, ticket_labels(name), conversations(customer_phone, status)"
+      "id, reason, created_at, conversation_id, label_id, assigned_to, ticket_labels(name), conversations(customer_phone, status)"
     )
     .eq("status", "open")
     .order("created_at", { ascending: false });
   if (role === "agent") {
-    query =
+    const general =
       labelIds.length > 0
-        ? query.or(`label_id.is.null,label_id.in.(${labelIds.join(",")})`)
-        : query.is("label_id", null);
+        ? `and(assigned_to.is.null,or(label_id.is.null,label_id.in.(${labelIds.join(",")})))`
+        : `and(assigned_to.is.null,label_id.is.null)`;
+    query = query.or(`assigned_to.eq.${user.id},${general}`);
   }
 
   // Equipo del tenant (RLS: app_users_team_select) para mostrar quién
@@ -55,6 +57,7 @@ export default async function TicketsPage() {
       customer_phone: conv?.customer_phone ?? "—",
       status: conv?.status ?? "—",
       label_name: label?.name ?? null,
+      assigned_name: (t.assigned_to && team[t.assigned_to]) || null,
     };
   });
 

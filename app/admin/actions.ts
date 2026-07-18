@@ -279,6 +279,63 @@ export async function markInvoicePaidAdmin(fd: FormData): Promise<void> {
   revalidatePath(`/admin/clients/${tenantId}`);
 }
 
+// ── Facturas manuales (implementaciones y cobros puntuales, 0029) ───────────
+// Independientes del ciclo de mensajes: no pausan el bot ni tocan el contador;
+// «Marcar pagada» solo registra el pago. El cliente las ve en /dashboard/plan.
+export async function createManualInvoice(fd: FormData): Promise<void> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  const description = String(fd.get("description") ?? "").trim().slice(0, 120);
+  const amount = Number(String(fd.get("amount") ?? "").trim());
+  const due = String(fd.get("due_date") ?? "").trim();
+  if (!tenantId || !description) return;
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) return;
+
+  const { data: inv, error } = await admin
+    .from("invoices")
+    .insert({
+      tenant_id: tenantId,
+      concept: "manual",
+      description,
+      amount,
+      due_date: due || null,
+      cycle_start: null,
+    })
+    .select("id")
+    .single();
+  await logAudit(admin, {
+    adminId,
+    action: "invoice_manual_created",
+    tenantId,
+    detail: { invoice_id: inv?.id, description, amount, due_date: due || null, error: error?.message },
+  });
+  revalidatePath(`/admin/clients/${tenantId}`);
+}
+
+// Solo facturas manuales y PENDIENTES (las automáticas y las pagadas son
+// historial contable y no se tocan).
+export async function deleteManualInvoice(fd: FormData): Promise<void> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const invoiceId = String(fd.get("invoice_id") ?? "");
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  if (!invoiceId || !tenantId) return;
+
+  await admin
+    .from("invoices")
+    .delete()
+    .eq("id", invoiceId)
+    .eq("concept", "manual")
+    .eq("status", "pendiente");
+  await logAudit(admin, {
+    adminId,
+    action: "invoice_manual_deleted",
+    tenantId,
+    detail: { invoice_id: invoiceId },
+  });
+  revalidatePath(`/admin/clients/${tenantId}`);
+}
+
 // ── Reiniciar el contador de mensajes (entrega en cero tras pruebas) ────────
 export async function resetMessageCounter(fd: FormData): Promise<void> {
   const { admin, adminId } = await requirePlatformAdmin();

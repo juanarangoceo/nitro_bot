@@ -14,6 +14,8 @@ export type TicketRow = {
   customer_phone: string;
   status: string;
   label_name: string | null;
+  // Nombre del usuario al que se asignó el ticket (null = general).
+  assigned_name: string | null;
 };
 
 type Message = {
@@ -170,6 +172,11 @@ export function TicketsClient({
             >
               {t.label_name ?? "Sin etiqueta"}
             </span>
+            {t.assigned_name && (
+              <span className="ml-1 mt-1 inline-block rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                {t.assigned_name}
+              </span>
+            )}
             <p className="mt-1 text-[11px] text-neutral-400">
               {new Date(t.created_at).toLocaleString("es-CO")}
             </p>
@@ -185,6 +192,7 @@ export function TicketsClient({
               <p className="text-sm font-medium text-neutral-900">{selected.customer_phone}</p>
               <p className="text-xs text-neutral-500">
                 Estado: {selected.status} · {selected.label_name ?? "Sin etiqueta"}
+                {selected.assigned_name ? ` · Asignado a ${selected.assigned_name}` : ""}
               </p>
             </div>
             <form action={resolveTicket}>
