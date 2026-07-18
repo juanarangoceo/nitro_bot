@@ -14,7 +14,12 @@ import { env } from "@/lib/env";
 import { enqueue } from "@/lib/queue";
 import { getTenantByPhoneNumberId } from "@/lib/tenant";
 import { processInboundMessage } from "@/lib/ai/worker";
-import { extractInboundMessages, type WaWebhookBody } from "@/lib/whatsapp/meta";
+import {
+  extractFailedStatuses,
+  extractInboundMessages,
+  type WaWebhookBody,
+} from "@/lib/whatsapp/meta";
+import { logEvent } from "@/lib/ops/events";
 
 // El worker hace debounce (~8s) + llamadas a Gemini dentro de after(); damos
 // margen de ejecución a la invocación.
@@ -64,8 +69,35 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("bad json", { status: 400 });
   }
 
-  // Solo eventos de WhatsApp. Otros (statuses, etc.) se ignoran silenciosamente.
+  // Solo eventos de WhatsApp. Los statuses de entrega/lectura se ignoran,
+  // EXCEPTO los failed: la Cloud API acepta el envío (wamid) aunque el número
+  // no tenga WhatsApp o Meta decida no entregar (límite de marketing) — sin
+  // esto el fallo es invisible (caso real: recordatorio de carrito que "salió"
+  // pero nunca llegó, 2026-07-18).
   const inbound = extractInboundMessages(body);
+  const failed = extractFailedStatuses(body);
+
+  for (const { value, status } of failed) {
+    const phoneNumberId = value.metadata?.phone_number_id;
+    enqueue(async () => {
+      const resolved = phoneNumberId ? await getTenantByPhoneNumberId(phoneNumberId) : null;
+      await logEvent({
+        kind: "wa_delivery_failure",
+        severity: "warning",
+        tenantId: resolved?.tenant.id ?? null,
+        detail: {
+          wa_message_id: status.id,
+          recipient: status.recipient_id ?? null,
+          errors: (status.errors ?? []).map((e) => ({
+            code: e.code,
+            title: e.title,
+            message: e.message,
+            details: e.error_data?.details,
+          })),
+        },
+      });
+    });
+  }
 
   // Encolamos el trabajo pesado y respondemos 200 de inmediato (< 1s).
   for (const { value, message } of inbound) {

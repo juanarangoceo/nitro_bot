@@ -23,6 +23,7 @@ export type EventKind =
   | "video_received"
   | "stale_reply_dropped"
   | "wa_template_usage"
+  | "wa_delivery_failure"
   | "cart_reminder"
   | "cart_optout";
 

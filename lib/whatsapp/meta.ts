@@ -380,12 +380,23 @@ export type WaInboundMessage = {
   video?: { id: string; mime_type?: string; caption?: string };
 };
 
+// Callback de estado de un mensaje SALIENTE (sent/delivered/read/failed).
+// Solo los failed nos importan: la Cloud API acepta el envío (devuelve wamid)
+// aunque el número no exista en WhatsApp — el fallo llega después por aquí.
+export type WaStatus = {
+  id: string; // wamid del mensaje enviado
+  status: "sent" | "delivered" | "read" | "failed" | string;
+  timestamp?: string;
+  recipient_id?: string; // teléfono destino (E.164 sin '+')
+  errors?: { code?: number; title?: string; message?: string; error_data?: { details?: string } }[];
+};
+
 export type WaValue = {
   messaging_product: string;
   metadata?: { display_phone_number?: string; phone_number_id?: string };
   contacts?: { profile?: { name?: string }; wa_id?: string }[];
   messages?: WaInboundMessage[];
-  statuses?: unknown[]; // entregas/lecturas — las ignoramos
+  statuses?: WaStatus[]; // entregas/lecturas se ignoran; los failed se loguean
 };
 
 export type WaWebhookBody = {
@@ -405,6 +416,24 @@ export function extractInboundMessages(
       if (!value?.messages?.length) continue;
       for (const message of value.messages) {
         out.push({ value, message });
+      }
+    }
+  }
+  return out;
+}
+
+// Extrae los callbacks de estado FALLIDOS (entrega imposible: número sin
+// WhatsApp, límite de marketing de Meta, etc.). Los demás estados se ignoran.
+export function extractFailedStatuses(
+  body: WaWebhookBody
+): { value: WaValue; status: WaStatus }[] {
+  const out: { value: WaValue; status: WaStatus }[] = [];
+  for (const entry of body.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const value = change.value;
+      if (!value?.statuses?.length) continue;
+      for (const status of value.statuses) {
+        if (status.status === "failed") out.push({ value, status });
       }
     }
   }
