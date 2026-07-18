@@ -14,8 +14,11 @@
 //      (requires_human/human_active) o con sesión abierta (<24h) → se posterga.
 //   6. Doble verificación de compra: si el bot ya le creó una orden después
 //      del abandono, el checkout se cierra sin enviar.
-//   7. La URL del checkout debe empezar EXACTO por la base configurada (la
-//      base vive fija en la plantilla; solo viaja el sufijo). Mismatch → no
+//   7. El botón debe reconstruir un link válido: la URL del checkout empieza
+//      por la base configurada (viaja el resto como sufijo) o, si no, se
+//      extrae el token de /checkouts/ac|cn/{token} del MISMO dominio y viaja
+//      solo el token (la base de la plantilla termina en /checkouts/cn/ y
+//      Shopify recupera el carrito desde ese formato). Sin link válido → no
 //      se envía y el checkout expira (un botón roto es peor que no enviar).
 //   8. Meta rechaza el envío → máx 1 reintento en la corrida siguiente,
 //      luego expired.
@@ -52,6 +55,24 @@ type CheckoutRow = {
 
 function bogotaHour(now: Date): number {
   return (now.getUTCHours() - 5 + 24) % 24;
+}
+
+// Sufijo del botón de la plantilla (la base vive FIJA en la plantilla de
+// Meta). La abandoned_checkout_url real de Shopify es
+// /{store_id}/checkouts/ac/{token}/recover?key=… — no empieza por la base
+// pública /checkouts/cn/, pero el mismo token en /checkouts/cn/{token}
+// restaura el carrito (verificado 2026-07-18 contra la tienda real: redirige
+// a una sesión nueva con los mismos ítems). Solo se acepta el token si la URL
+// es del MISMO host que la base (una tienda dev jamás calza con la base de
+// producción). Sin sufijo válido → null (el caller expira el checkout).
+export function buttonSuffix(url: string, base: string): string | null {
+  if (url.startsWith(base) && url.length > base.length) return url.slice(base.length);
+  try {
+    if (new URL(url).host !== new URL(base).host) return null;
+  } catch {
+    return null;
+  }
+  return /\/checkouts\/(?:ac|cn)\/([A-Za-z0-9_-]+)/.exec(url)?.[1] ?? null;
 }
 
 // "Zapatos de tacón rojo talla…" (+ " y 2 más" si el carrito trae más ítems).
@@ -160,10 +181,12 @@ async function processCheckout(params: {
     }
   }
 
-  // 7) La URL de recuperación debe calzar con la base fija de la plantilla.
+  // 7) El botón debe reconstruir un link válido sobre la base fija de la
+  // plantilla (sufijo directo o token del checkout — ver buttonSuffix).
   const base = settings.checkout_url_base;
   const url = row.abandoned_checkout_url ?? "";
-  if (!url.startsWith(base) || url.length <= base.length) {
+  const urlSuffix = buttonSuffix(url, base);
+  if (!urlSuffix) {
     await terminal("expired");
     await logEvent({
       kind: "cart_reminder",
@@ -173,7 +196,6 @@ async function processCheckout(params: {
     });
     return "expired";
   }
-  const urlSuffix = url.slice(base.length);
 
   // Variables de la plantilla (server-side, jamás el modelo).
   const firstName = row.customer_name?.trim().split(/\s+/)[0] || "de nuevo";

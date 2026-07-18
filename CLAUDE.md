@@ -832,11 +832,34 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     el código viejo los procesa como producto inexistente (delete no-op
     inofensivo). El módulo queda OFF por defecto para todos.
 
+- **Sesión 2026-07-18 (bis) — revisión del commit manual de tickets + fix
+  carritos `url_mismatch`**:
+  - **Commit b1a5bc0 (Juan lo hizo a mano) VERIFICADO completo**: facturas
+    manuales (migración #29: concept `manual`, `cycle_start` opcional,
+    `description`; crear/eliminar desde /admin, el cliente las ve en Plan,
+    `refreshBillingStatus` las excluye) + tickets asignados (migración #30:
+    FK compuesta `(assigned_to, tenant_id)` con `set null (assigned_to)`,
+    policy `tickets_select` reemplaza la de 0024: asignado lo ve SOLO ese
+    usuario + admin; selector de destinatario en «Pasar a Tickets»). Ambas
+    migraciones aplicadas; typecheck/build verdes; 12/12 checks RLS/FK con
+    tenants desechables. El script desechable `_tmp-check-0029-0030.ts` que
+    quedó committeado se retiró del repo.
+  - **Fix carritos — por qué no se enviaban**: el módulo SÍ ingería checkouts
+    reales (4 el 2026-07-18), pero la `abandoned_checkout_url` real de
+    Shopify es `/{store_id}/checkouts/ac/{token}/recover?key=…` — jamás
+    empieza por la base de la plantilla (`…/checkouts/cn/`) → regla 7
+    (`url_mismatch`) expiraba TODOS los envíos. Verificado contra la tienda
+    real: `…/checkouts/cn/{token}` (mismo token del formato ac) redirige a
+    una sesión nueva CON el carrito intacto. `buttonSuffix()` en
+    `lib/carts/reminders.ts`: sufijo directo si la URL empieza por la base;
+    si no, extrae el token de `/checkouts/ac|cn/{token}` SOLO si el host
+    calza con la base (tienda dev → null → expired, igual que antes). 9/9
+    casos verificados con las URLs reales.
+
 ### 🔜 Pendiente
 - **Activar carritos abandonados para Elegance (Spec 13, post-deploy)**:
-  (1) en /admin → detalle → card «Carritos abandonados»: encender el toggle y
-  poner la base `https://elegancecolombia.com/checkouts/cn/` (sin base el cron
-  NO envía); (2) e2e real: abandonar un checkout con teléfono en la tienda →
+  (1) HECHO (2026-07-18): toggle ON y base
+  `https://elegancecolombia.com/checkouts/cn/` configurada; (2) e2e real: abandonar un checkout con teléfono en la tienda →
   fila `pending` en /dashboard/carts → a los ~60 min (en ventana 8-20 Bogotá)
   llega la plantilla → responder «BAJA» debe contestar el texto fijo y marcar
   `opted_out`; (3) confirmar en el admin de Shopify de Elegance que la
