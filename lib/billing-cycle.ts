@@ -8,9 +8,12 @@
 //      SIGUE respondiendo; la pausa es manual (tenants.service_paused, botón
 //      «Suspender bot por pago» en /admin). Telegram sostiene la urgencia:
 //      alerta en el cruce + recordatorio diario (sendOverduePaymentAlerts).
-//   4. Pagar la renovación (botón en /admin) resetea el contador a 0, corre
-//      el corte a pago + 1 mes y REACTIVA el bot si estaba suspendido por
-//      pago; pagar el adicional solo limpia la deuda.
+//   4. Pagar la renovación (botón en /admin) arranca el ciclo nuevo con el
+//      EXCEDENTE de gracia descontado del plan (decisión 2026-07-19: lo
+//      consumido por encima del total facturado ya no se regala — p. ej.
+//      7.350 consumidos de 7.000 → el ciclo nuevo arranca en 350), corre el
+//      corte a pago + 1 mes y REACTIVA el bot si estaba suspendido por pago;
+//      pagar el adicional solo limpia la deuda.
 // Las escrituras de facturas/alertas son best-effort: un fallo aquí jamás
 // tumba la respuesta del bot.
 
@@ -152,7 +155,8 @@ export async function processBillingOnMessage(
           `🔴 <b>${escTelegram(tenant.name)}</b> agotó ${effectiveLimit.toLocaleString(
             "es-CO"
           )} mensajes${addonOn ? " (plan + adicional)" : ""} con la renovación SIN pagar: ` +
-            `entró en MODO GRACIA — el bot sigue respondiendo por cortesía. ` +
+            `entró en MODO GRACIA — el bot sigue respondiendo y ese excedente se ` +
+            `descontará del ciclo nuevo al pagar. ` +
             `Si no registra el pago, suspéndelo desde /admin («Suspender bot por pago»).`
         );
       }
@@ -216,24 +220,33 @@ async function refreshBillingStatus(tenantId: string): Promise<void> {
     .eq("id", tenantId);
 }
 
-// Arranca el ciclo nuevo: contador a `countStart` (1 cuando lo dispara un
-// mensaje, para que ese mensaje cuente en el ciclo que empieza), corte =
-// hoy(Bogotá) + 1 mes y aplica el cambio de plan programado (pending_plan).
-async function activateNextCycle(tenantId: string, countStart: 0 | 1): Promise<boolean> {
+// Arranca el ciclo nuevo: el contador arranca en el EXCEDENTE del ciclo que
+// cierra — max(0, consumido − total facturado, con total = plan + 2.000 si el
+// adicional estaba activado) — para que los mensajes de gracia se descuenten
+// del plan nuevo. Cuando lo dispara un mensaje (worker), ese mensaje ya está
+// dentro del excedente (consumido = total + 1 en el cruce), así que cuenta en
+// el ciclo que empieza. El total se mide contra el plan VIEJO (antes de
+// aplicar pending_plan). Corte = hoy(Bogotá) + 1 mes. Devuelve el excedente
+// aplicado (null si falló).
+async function activateNextCycle(tenantId: string): Promise<number | null> {
   const admin = createAdminClient();
   const { data: tenant } = await admin
     .from("tenants")
-    .select("id, pending_plan")
+    .select("id, pending_plan, current_month_messages, message_limit, addon_enabled, addon_price")
     .eq("id", tenantId)
     .maybeSingle();
-  if (!tenant) return false;
+  if (!tenant) return null;
+
+  const addonOn = tenant.addon_enabled === true && tenant.addon_price != null;
+  const effective = tenant.message_limit + (addonOn ? ADDON_MESSAGES : 0);
+  const carry = Math.max(0, tenant.current_month_messages - effective);
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
   const next = new Date(`${today}T12:00:00Z`);
   next.setUTCMonth(next.getUTCMonth() + 1);
 
   const update: Record<string, unknown> = {
-    current_month_messages: countStart,
+    current_month_messages: carry,
     counter_period_start: new Date().toISOString(),
     billing_due_date: next.toISOString().slice(0, 10),
     pending_plan: null,
@@ -251,10 +264,10 @@ async function activateNextCycle(tenantId: string, countStart: 0 | 1): Promise<b
   const { error } = await admin.from("tenants").update(update).eq("id", tenantId);
   if (error) {
     console.error("[billing] activateNextCycle falló:", error.message);
-    return false;
+    return null;
   }
   await refreshBillingStatus(tenantId);
-  return true;
+  return carry;
 }
 
 // Renovación PAGADA del ciclo vigente que aún no arrancó (el pago anticipado
@@ -273,25 +286,26 @@ async function findQueuedRenewal(tenant: BillingTenant): Promise<boolean> {
 }
 
 // Si hay una renovación pagada en espera, arranca el ciclo nuevo (lo llama el
-// worker justo cuando el ciclo actual se agota: el bot ni se entera).
+// worker justo cuando el ciclo actual se agota: el bot ni se entera; el
+// mensaje que cruza queda como excedente=1 y cuenta en el ciclo nuevo).
 async function tryActivateQueuedRenewal(tenant: BillingTenant): Promise<boolean> {
   if (!(await findQueuedRenewal(tenant))) return false;
-  const ok = await activateNextCycle(tenant.id, 1);
-  if (ok) {
-    await sendTelegramAlert(
-      `🟢 <b>${escTelegram(tenant.name)}</b>: se agotó su ciclo y la renovación ya estaba ` +
-        `pagada — el ciclo nuevo arrancó solo (corte: hoy + 1 mes).`
-    );
-  }
-  return ok;
+  const carry = await activateNextCycle(tenant.id);
+  if (carry == null) return false;
+  await sendTelegramAlert(
+    `🟢 <b>${escTelegram(tenant.name)}</b>: se agotó su ciclo y la renovación ya estaba ` +
+      `pagada — el ciclo nuevo arrancó solo (corte: hoy + 1 mes).`
+  );
+  return true;
 }
 
 // Marca una factura como pagada.
 // Renovación: si el tenant YA agotó sus créditos (o el corte ya llegó), el
-// ciclo nuevo arranca de inmediato; si aún le quedan créditos, el pago queda
-// PROGRAMADO y el ciclo arranca solo al agotarlos o al llegar el corte — lo
-// que ocurra primero (el cliente no pierde lo que ya pagó del adicional).
-// Adicional: solo limpia la deuda.
+// ciclo nuevo arranca de inmediato — con el excedente de gracia descontado
+// del plan nuevo (max(0, consumido − total facturado)); si aún le quedan
+// créditos, el pago queda PROGRAMADO y el ciclo arranca solo al agotarlos o
+// al llegar el corte — lo que ocurra primero (el cliente no pierde lo que ya
+// pagó del adicional). Adicional: solo limpia la deuda.
 export async function markInvoicePaid(
   invoiceId: string
 ): Promise<{ ok: boolean; error?: string; concept?: string; queued?: boolean }> {
@@ -316,7 +330,7 @@ export async function markInvoicePaid(
     const { data: tenant } = await admin
       .from("tenants")
       .select(
-        "id, current_month_messages, message_limit, addon_enabled, addon_price, billing_due_date"
+        "id, name, current_month_messages, message_limit, addon_enabled, addon_price, billing_due_date"
       )
       .eq("id", invoice.tenant_id)
       .maybeSingle();
@@ -329,8 +343,15 @@ export async function markInvoicePaid(
     const corteReached = tenant.billing_due_date != null && tenant.billing_due_date <= today;
 
     if (exhausted || corteReached) {
-      const ok = await activateNextCycle(invoice.tenant_id, 0);
-      if (!ok) return { ok: false, error: "No se pudo reiniciar el ciclo." };
+      const carry = await activateNextCycle(invoice.tenant_id);
+      if (carry == null) return { ok: false, error: "No se pudo reiniciar el ciclo." };
+      if (carry > 0) {
+        await sendTelegramAlert(
+          `🟢 <b>${escTelegram(tenant.name)}</b>: renovación pagada con ${carry.toLocaleString(
+            "es-CO"
+          )} mensajes de gracia — el ciclo nuevo arranca con ese excedente ya descontado del plan.`
+        );
+      }
     } else {
       // Quedan créditos: el arranque queda programado (worker/cron lo activan).
       queued = true;
@@ -434,7 +455,7 @@ export async function activateDueRenewals(): Promise<string[]> {
   const activated: string[] = [];
   for (const t of (tenants ?? []) as BillingTenant[]) {
     if (!(await findQueuedRenewal(t))) continue;
-    if (await activateNextCycle(t.id, 0)) {
+    if ((await activateNextCycle(t.id)) != null) {
       activated.push(t.name);
       await sendTelegramAlert(
         `🟢 <b>${escTelegram(t.name)}</b>: llegó su corte con la renovación ya pagada — ` +

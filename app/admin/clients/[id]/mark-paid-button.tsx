@@ -1,9 +1,10 @@
 "use client";
 
 // Botón «Marcar pagada» con confirmación explícita: pagar una RENOVACIÓN
-// reinicia el ciclo (contador a 0, corte a hoy + 1 mes) — usarlo solo cuando
-// el cliente pagó de verdad (aprendizaje del 2026-07-17: se usó dos veces
-// para "despausar"/limpiar la vista y regaló ciclos).
+// reinicia el ciclo (contador arranca en el excedente de gracia consumido —
+// 0 si no lo hubo —, corte a hoy + 1 mes) — usarlo solo cuando el cliente
+// pagó de verdad (aprendizaje del 2026-07-17: se usó dos veces para
+// "despausar"/limpiar la vista y regaló ciclos).
 
 import { deleteManualInvoice, markInvoicePaidAdmin } from "../../actions";
 
@@ -18,7 +19,7 @@ export function MarkPaidButton({
 }) {
   const warning =
     concept === "renovacion"
-      ? "¿El cliente YA PAGÓ la renovación?\n\nSi ya agotó sus créditos (o llegó el corte), el ciclo nuevo arranca YA: contador a 0 y corte a hoy + 1 mes.\n\nSi todavía le quedan créditos, el pago queda PROGRAMADO: el ciclo nuevo arranca solo al agotarlos o al llegar el corte, lo que ocurra primero.\n\nSi el bot estaba suspendido por pago, se reactiva automáticamente.\n\nSi NO ha pagado de verdad, cancela: no uses este botón."
+      ? "¿El cliente YA PAGÓ la renovación?\n\nSi ya agotó sus créditos (o llegó el corte), el ciclo nuevo arranca YA: el contador arranca con los mensajes de gracia ya descontados (0 si no consumió de más) y corte a hoy + 1 mes.\n\nSi todavía le quedan créditos, el pago queda PROGRAMADO: el ciclo nuevo arranca solo al agotarlos o al llegar el corte, lo que ocurra primero.\n\nSi el bot estaba suspendido por pago, se reactiva automáticamente.\n\nSi NO ha pagado de verdad, cancela: no uses este botón."
       : concept === "adicional"
         ? "¿El cliente ya pagó el paquete adicional?\n\nEsto solo registra el pago (no reinicia el contador)."
         : "¿El cliente ya pagó esta factura?\n\nEsto solo registra el pago (no toca el plan ni el ciclo de mensajes).";

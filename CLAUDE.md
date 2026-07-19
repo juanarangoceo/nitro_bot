@@ -884,8 +884,9 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   - **Modo gracia** (`lib/billing-cycle.ts`): agotar el total del ciclo sin
     pago ya NO devuelve `allowed: false` — el bot sigue respondiendo; alerta
     🔴 a Juan en el cruce exacto. El vencimiento del adicional a 15 días
-    tampoco pausa. Los mensajes respondidos en gracia se pierden al resetear
-    el ciclo (cortesía asumida).
+    tampoco pausa. (Los mensajes de gracia se DESCUENTAN del ciclo nuevo
+    desde la sesión bis del mismo día — ver abajo; la "cortesía asumida"
+    original duró horas.)
   - **Urgencia sostenida**: banner del cliente reescrito (suspendido >
     gracia > vencida > 80%): en gracia es rojo amable con el MONTO de la
     renovación («sigue atendiendo por cortesía… realiza hoy el pago»); y
@@ -906,9 +907,38 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     adicional = emisión+15d) y el reset por pago mueve el corte a
     día-del-arranque + 1 mes.
 
+- **Sesión 2026-07-19 (bis) — Excedente de gracia descontado del ciclo nuevo
+  (sin migración; typecheck/verify verdes + 7/7 checks DB con tenants
+  desechables; PENDIENTE deploy junto con el modo gracia)**: decisión de Juan
+  — los mensajes de gracia ya NO se regalan (reemplaza la "cortesía asumida"
+  de la sesión anterior del mismo día).
+  - **Regla**: al arrancar un ciclo nuevo, el contador arranca en
+    `max(0, consumido − total facturado)` con total = plan + 2.000 si el
+    adicional estaba activado (los 2.000 NO son excedente: su factura queda
+    como deuda aparte, no se cobran doble). Ej.: Elegance consume 7.350 de
+    7.000 → paga la renovación → ciclo nuevo arranca en 350 (le quedan 4.650
+    de sus 5.000). El excedente se mide contra el plan VIEJO, antes de
+    aplicar `pending_plan`.
+  - **Implementación** (`activateNextCycle` en `lib/billing-cycle.ts`): perdió
+    el param `countStart` — ahora lee consumo/límite/addon del tenant y
+    calcula el carry él mismo. Cubre los 3 arranques: «Marcar pagada»
+    (excedente grande típico), activación del pago programado al agotar
+    (worker — el mensaje que cruza ES el excedente de 1, igual que el
+    `countStart: 1` de antes) y cron del corte (sin excedente → 0, idéntico a
+    hoy). Devuelve el carry para la alerta.
+  - **Textos alineados**: alerta 🔴 de cruce a gracia y banner rojo del
+    cliente avisan que el excedente se descontará; alerta 🟢 nueva al pagar
+    con excedente dice cuántos se descontaron; confirm del botón «Marcar
+    pagada» ya no promete "contador a 0".
+  - **Verificado 7/7** (script desechable, tenants PRUEBA-BORRAR ya
+    borrados): gracia con adicional 2450/2100→350, sin adicional 130/100→30,
+    corte sin excedente→0, créditos vivos→programado intacto, cruce con pago
+    programado 101/100→1, pending_plan + carry 160/100→60 con límite nuevo.
+
 ### 🔜 Pendiente
-- **Deploy del modo gracia + botón de suspensión (2026-07-19)** y prueba en
-  vivo: ver el badge y el botón en /admin, suspender/reactivar un tenant de
+- **Deploy del modo gracia + botón de suspensión + excedente de gracia
+  descontado (2026-07-19, todo commiteado en main — commit 9041663)** y
+  prueba en vivo: ver el badge y el botón en /admin, suspender/reactivar un tenant de
   prueba, y confirmar que el cron diario de las 11:00 UTC reporta `alerts` en
   la respuesta. OJO: hasta el deploy, producción sigue PAUSANDO
   automáticamente al agotar el ciclo (código viejo).
@@ -929,9 +959,11 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
 - **Vigilar el ciclo de Elegance (facturación activa desde 2026-07-17)**:
   contador ~6.444/7.000 al 2026-07-19 (adicional en uso), renovación $480k
   PENDIENTE (+ manual $80k), adicional $120k ya PAGADA, corte 2026-08-12. Al
-  pago real: «Marcar pagada» la renovación (resetea a 5.000 nuevos). Tras el
-  deploy del modo gracia, al agotar los 7.000 el bot SIGUE respondiendo:
-  la pausa es el botón «Suspender bot por pago» en /admin (decisión de Juan).
+  pago real: «Marcar pagada» la renovación — el ciclo nuevo arranca con el
+  excedente de gracia descontado (si consumió p. ej. 7.350, arranca en 350).
+  Tras el deploy del modo gracia, al agotar los 7.000 el bot SIGUE
+  respondiendo: la pausa es el botón «Suspender bot por pago» en /admin
+  (decisión de Juan).
   Confirmar que el cron diario `/api/cron/billing` corre (Vercel, 11:00 UTC).
 - **Post-deploy specs A-D (2026-07-17)**: (1) poner NOMBRE a los usuarios de
   Elegance desde /admin → detalle del cliente; (2) responder un ticket real y

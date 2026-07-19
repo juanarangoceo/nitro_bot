@@ -34,10 +34,11 @@ export function BillingAlert({
     message =
       "El servicio de tu asistente está suspendido por un pago pendiente y tus clientes no están recibiendo respuesta. Realiza el pago y avísanos para reactivarlo de inmediato.";
   } else if (used >= effective) {
-    // Modo gracia: el bot sigue respondiendo por cortesía mientras se
-    // registra el pago — urgente pero amable (decisión 2026-07-19).
+    // Modo gracia: el bot sigue respondiendo mientras se registra el pago —
+    // urgente pero amable (decisión 2026-07-19). Los mensajes atendidos en
+    // gracia se descuentan del próximo ciclo, y el banner lo dice.
     tone = "red";
-    message = `Los créditos de tu ciclo se agotaron y, por cortesía, tu asistente sigue atendiendo a tus clientes. Realiza hoy el pago de tu renovación${renewalAmount} para conservar el servicio sin interrupciones.`;
+    message = `Los créditos de tu ciclo se agotaron y tu asistente sigue atendiendo a tus clientes; esos mensajes se descontarán de tu próximo plan. Realiza hoy el pago de tu renovación${renewalAmount} para conservar el servicio sin interrupciones.`;
   } else if (used >= limit && addonOn) {
     tone = "amber";
     message = `Se agotó tu plan y el asistente sigue atendiendo con el paquete adicional de ${ADDON_MESSAGES.toLocaleString(
