@@ -937,7 +937,7 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
 
 ### 🔜 Pendiente
 - **Deploy del modo gracia + botón de suspensión + excedente de gracia
-  descontado (2026-07-19, todo commiteado en main — commit 9041663)** y
+  descontado (2026-07-19, todo commiteado en main — commit b511638)** y
   prueba en vivo: ver el badge y el botón en /admin, suspender/reactivar un tenant de
   prueba, y confirmar que el cron diario de las 11:00 UTC reporta `alerts` en
   la respuesta. OJO: hasta el deploy, producción sigue PAUSANDO
