@@ -875,8 +875,9 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
 
 - **Sesión 2026-07-19 — Modo gracia + suspensión manual por pago (migración
   #31 aplicada; build/verify verdes + 11/11 checks DB con tenant desechable;
-  PENDIENTE deploy)**: decisión de Juan — la pausa por falta de pago deja de
-  ser automática; el corte es una palanca manual.
+  DESPLEGADO en producción junto con el excedente de gracia — sesión bis)**:
+  decisión de Juan — la pausa por falta de pago deja de ser automática; el
+  corte es una palanca manual.
   - **Migración #31**: `tenants.service_paused` (default false). Independiente
     de `is_active` («Pausar cliente» apaga todo): suspendido, el bot calla en
     SILENCIO TOTAL sin consumir mensajes (gate 4b del worker, antes del
@@ -909,7 +910,8 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
 
 - **Sesión 2026-07-19 (bis) — Excedente de gracia descontado del ciclo nuevo
   (sin migración; typecheck/verify verdes + 7/7 checks DB con tenants
-  desechables; PENDIENTE deploy junto con el modo gracia)**: decisión de Juan
+  desechables; DESPLEGADO en producción — push c9d1436, health OK
+  `db:up`)**: decisión de Juan
   — los mensajes de gracia ya NO se regalan (reemplaza la "cortesía asumida"
   de la sesión anterior del mismo día).
   - **Regla**: al arrancar un ciclo nuevo, el contador arranca en
@@ -936,12 +938,11 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     programado 101/100→1, pending_plan + carry 160/100→60 con límite nuevo.
 
 ### 🔜 Pendiente
-- **Deploy del modo gracia + botón de suspensión + excedente de gracia
-  descontado (2026-07-19, todo commiteado en main — commit b511638)** y
-  prueba en vivo: ver el badge y el botón en /admin, suspender/reactivar un tenant de
-  prueba, y confirmar que el cron diario de las 11:00 UTC reporta `alerts` en
-  la respuesta. OJO: hasta el deploy, producción sigue PAUSANDO
-  automáticamente al agotar el ciclo (código viejo).
+- **Prueba en vivo del modo gracia + suspensión + excedente (DESPLEGADO
+  2026-07-19, push c9d1436, health OK)**: ver el badge y el botón «Suspender
+  bot por pago» en /admin, suspender/reactivar un tenant de prueba, y
+  confirmar que el cron diario de las 11:00 UTC reporta `alerts` en la
+  respuesta. La pausa automática por agotar ciclo YA NO existe en producción.
 - **Activar carritos abandonados para Elegance (Spec 13, post-deploy)**:
   (1) HECHO (2026-07-18): toggle ON y base
   `https://elegancecolombia.com/checkouts/cn/` configurada; (2) e2e real: abandonar un checkout con teléfono en la tienda →
