@@ -1,10 +1,11 @@
 // Banner global de créditos/facturación del dashboard (se renderiza en el
-// layout, sobre el contenido). Prioridad: créditos agotados > factura vencida >
-// créditos por agotarse (>= 80%). El botón "Ver plan y pagos" solo aplica a
-// usuarios con rol admin (el módulo /dashboard/plan está restringido).
+// layout, sobre el contenido). Prioridad: servicio suspendido > créditos
+// agotados (modo gracia) > factura vencida > créditos por agotarse (>= 80%).
+// El botón "Ver plan y pagos" solo aplica a usuarios con rol admin (el módulo
+// /dashboard/plan está restringido).
 
 import Link from "next/link";
-import { ADDON_MESSAGES, billingInfo, formatDueDate } from "@/lib/billing";
+import { ADDON_MESSAGES, billingInfo, formatCop, formatDueDate } from "@/lib/billing";
 import type { DashboardTenant } from "@/lib/dashboard/context";
 
 export function BillingAlert({
@@ -22,12 +23,21 @@ export function BillingAlert({
   const pct = Math.min(100, Math.round((used / effective) * 100));
   const billing = billingInfo(tenant);
 
+  // La renovación con monto concreto persuade más que el aviso genérico.
+  const renewalAmount =
+    tenant.monthly_fee != null ? ` (${formatCop(tenant.monthly_fee)})` : "";
+
   let tone: "red" | "amber" | null = null;
   let message = "";
-  if (used >= effective) {
+  if (tenant.service_paused) {
     tone = "red";
     message =
-      "Se agotaron los créditos de tu ciclo y el asistente dejó de responder a tus clientes. Realiza el pago de la renovación para reactivar el servicio.";
+      "El servicio de tu asistente está suspendido por un pago pendiente y tus clientes no están recibiendo respuesta. Realiza el pago y avísanos para reactivarlo de inmediato.";
+  } else if (used >= effective) {
+    // Modo gracia: el bot sigue respondiendo por cortesía mientras se
+    // registra el pago — urgente pero amable (decisión 2026-07-19).
+    tone = "red";
+    message = `Los créditos de tu ciclo se agotaron y, por cortesía, tu asistente sigue atendiendo a tus clientes. Realiza hoy el pago de tu renovación${renewalAmount} para conservar el servicio sin interrupciones.`;
   } else if (used >= limit && addonOn) {
     tone = "amber";
     message = `Se agotó tu plan y el asistente sigue atendiendo con el paquete adicional de ${ADDON_MESSAGES.toLocaleString(
