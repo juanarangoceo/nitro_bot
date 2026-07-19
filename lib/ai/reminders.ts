@@ -207,17 +207,19 @@ export async function runReminderSweep(): Promise<{ sent: number; skipped: numbe
   let sent = 0;
   let skipped = 0;
 
+  // Misma regla que el bot (modo gracia 2026-07-19): los follow-ups salen
+  // siempre salvo suspensión manual (service_paused). El viejo skip "al
+  // límite" comparaba contra el plan sin sumar el adicional y dejó a Elegance
+  // 2 días sin recordatorios (5.003 >= 5.000) con el bot respondiendo normal.
   const { data: tenants } = await supabase
     .from("tenants")
-    .select("id, wa_phone_number_id, message_limit, current_month_messages")
+    .select("id, wa_phone_number_id")
     .eq("is_active", true)
     .eq("reminders_enabled", true)
     .eq("service_paused", false) // suspendido por pago: tampoco recordatorios
     .not("wa_phone_number_id", "is", null);
 
   for (const t of tenants ?? []) {
-    if ((t.current_month_messages ?? 0) >= (t.message_limit ?? 0)) continue;
-
     // Resolución completa (tenant + creds descifradas) reusando lib/tenant.
     let resolved;
     try {
