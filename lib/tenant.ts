@@ -29,6 +29,9 @@ export type Tenant = {
   billing_due_date: string | null;
   modules: Record<string, boolean>;
   is_active: boolean;
+  // Suspensión manual por pago (0031, botón en /admin): el bot calla sin
+  // consumir mensajes; el resto del tenant (webhooks, dashboard) sigue vivo.
+  service_paused: boolean;
   voice_replies_enabled: boolean;
   voice_id: string | null;
   // Números E.164 cuyas conversaciones son de prueba (no descuentan mensajes).

@@ -7,6 +7,7 @@ type TenantRow = {
   name: string;
   slug: string | null;
   is_active: boolean;
+  service_paused: boolean;
   plan: string | null;
   monthly_fee: number | null;
   message_limit: number;
@@ -71,7 +72,7 @@ export default async function AdminClientsPage() {
   const { data } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, addon_enabled, addon_price, wa_display_name, wa_phone_number_id, billing_due_date, billing_status"
+      "id, name, slug, is_active, service_paused, plan, monthly_fee, message_limit, current_month_messages, addon_enabled, addon_price, wa_display_name, wa_phone_number_id, billing_due_date, billing_status"
     )
     .order("created_at", { ascending: true });
   const tenants = (data as TenantRow[]) ?? [];
@@ -114,10 +115,14 @@ export default async function AdminClientsPage() {
                 <td className="px-5 py-3">
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] ${
-                      t.is_active ? "bg-emerald-100 text-emerald-700" : "bg-neutral-200 text-neutral-600"
+                      !t.is_active
+                        ? "bg-neutral-200 text-neutral-600"
+                        : t.service_paused
+                          ? "bg-red-100 text-red-700"
+                          : "bg-emerald-100 text-emerald-700"
                     }`}
                   >
-                    {t.is_active ? "Activo" : "Pausado"}
+                    {!t.is_active ? "Pausado" : t.service_paused ? "Bot suspendido 🚫" : "Activo"}
                   </span>
                 </td>
                 <td className="px-5 py-3 text-neutral-700">

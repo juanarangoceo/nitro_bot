@@ -3,7 +3,11 @@
 // 80% de consumo, en el worker — misma idempotencia por unique index).
 // Mismo esquema de auth que los demás crons (Bearer CRON_SECRET).
 
-import { generateUpcomingRenewals, activateDueRenewals } from "@/lib/billing-cycle";
+import {
+  generateUpcomingRenewals,
+  activateDueRenewals,
+  sendOverduePaymentAlerts,
+} from "@/lib/billing-cycle";
 
 export async function GET(req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;
@@ -17,7 +21,10 @@ export async function GET(req: Request): Promise<Response> {
     // Cortes que llegaron con la renovación pagada por anticipado → el ciclo
     // nuevo arranca hoy aunque queden créditos.
     const activated = await activateDueRenewals();
-    return Response.json({ ok: true, invoiced, activated });
+    // Recordatorio diario a Juan (Telegram) de cobros en riesgo: modo gracia
+    // sin pago y adicionales vencidos — la pausa ahora es manual desde /admin.
+    const alerts = await sendOverduePaymentAlerts();
+    return Response.json({ ok: true, invoiced, activated, alerts });
   } catch (e) {
     console.error("[cron billing] falló:", (e as Error).message);
     return Response.json({ ok: false, error: (e as Error).message }, { status: 500 });

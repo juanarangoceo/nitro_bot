@@ -313,6 +313,7 @@ export async function runCartReminderSweep(): Promise<{
     .select("id, wa_phone_number_id, cart_settings")
     .eq("is_active", true)
     .eq("abandoned_carts_enabled", true)
+    .eq("service_paused", false) // suspendido por pago: sin marketing saliente
     .not("wa_phone_number_id", "is", null);
 
   for (const t of tenants ?? []) {

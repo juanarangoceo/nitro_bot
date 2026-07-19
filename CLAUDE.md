@@ -873,7 +873,45 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     política de Meta: compradores reales que ya escriben por WhatsApp tienen
     mejor entregabilidad; vigilar `wa_delivery_failure` los primeros días.
 
+- **Sesión 2026-07-19 — Modo gracia + suspensión manual por pago (migración
+  #31 aplicada; build/verify verdes + 11/11 checks DB con tenant desechable;
+  PENDIENTE deploy)**: decisión de Juan — la pausa por falta de pago deja de
+  ser automática; el corte es una palanca manual.
+  - **Migración #31**: `tenants.service_paused` (default false). Independiente
+    de `is_active` («Pausar cliente» apaga todo): suspendido, el bot calla en
+    SILENCIO TOTAL sin consumir mensajes (gate 4b del worker, antes del
+    contador); números de prueba siguen funcionando; webhooks/dashboard vivos.
+  - **Modo gracia** (`lib/billing-cycle.ts`): agotar el total del ciclo sin
+    pago ya NO devuelve `allowed: false` — el bot sigue respondiendo; alerta
+    🔴 a Juan en el cruce exacto. El vencimiento del adicional a 15 días
+    tampoco pausa. Los mensajes respondidos en gracia se pierden al resetear
+    el ciclo (cortesía asumida).
+  - **Urgencia sostenida**: banner del cliente reescrito (suspendido >
+    gracia > vencida > 80%): en gracia es rojo amable con el MONTO de la
+    renovación («sigue atendiendo por cortesía… realiza hoy el pago»); y
+    recordatorio DIARIO a Juan por Telegram (`sendOverduePaymentAlerts` en el
+    cron `/api/cron/billing`): tenants en gracia con renovación pendiente +
+    adicionales vencidos; omite los ya suspendidos. Sin correos (decisión).
+  - **Botón «Suspender bot por pago» / «Reactivar bot»** en el detalle de
+    /admin (`service-paused-button.tsx`, confirmación explícita; action
+    `setServicePaused` auditada `service_suspend`/`service_resume`); badge
+    rojo en el header del detalle y en la lista de clientes. «Marcar pagada»
+    la renovación REACTIVA automáticamente (`markInvoicePaid` limpia
+    `service_paused`).
+  - Suspendido: excluido de recordatorios de silencio (`lib/ai/reminders.ts`)
+    y de plantillas de carritos (`lib/carts/reminders.ts`).
+  - **Confirmado en esta sesión contra la DB real**: las facturas SÍ se
+    generan solas (renovación al 80% o ≤10 días del corte; adicional al
+    agotar el plan), los vencimientos están bien (renovación = corte;
+    adicional = emisión+15d) y el reset por pago mueve el corte a
+    día-del-arranque + 1 mes.
+
 ### 🔜 Pendiente
+- **Deploy del modo gracia + botón de suspensión (2026-07-19)** y prueba en
+  vivo: ver el badge y el botón en /admin, suspender/reactivar un tenant de
+  prueba, y confirmar que el cron diario de las 11:00 UTC reporta `alerts` en
+  la respuesta. OJO: hasta el deploy, producción sigue PAUSANDO
+  automáticamente al agotar el ciclo (código viejo).
 - **Activar carritos abandonados para Elegance (Spec 13, post-deploy)**:
   (1) HECHO (2026-07-18): toggle ON y base
   `https://elegancecolombia.com/checkouts/cn/` configurada; (2) e2e real: abandonar un checkout con teléfono en la tienda →
@@ -889,11 +927,12 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   probar desde la tienda dev, poner temporalmente su dominio como base (el
   link del botón saldrá roto a propósito, apunta al dominio real).
 - **Vigilar el ciclo de Elegance (facturación activa desde 2026-07-17)**:
-  contador en ~5.003/7.000 (adicional en uso), renovación $480k y adicional
-  $120k pendientes, corte 2026-08-12. Al pago real del cliente: «Marcar
-  pagada» la renovación (resetea a 5.000 nuevos) y la del adicional. Si en 15
-  días (~01-ago) no ha pagado el adicional, el bot se pausa solo. Confirmar
-  además que el cron diario `/api/cron/billing` corrió (Vercel, 11:00 UTC).
+  contador ~6.444/7.000 al 2026-07-19 (adicional en uso), renovación $480k
+  PENDIENTE (+ manual $80k), adicional $120k ya PAGADA, corte 2026-08-12. Al
+  pago real: «Marcar pagada» la renovación (resetea a 5.000 nuevos). Tras el
+  deploy del modo gracia, al agotar los 7.000 el bot SIGUE respondiendo:
+  la pausa es el botón «Suspender bot por pago» en /admin (decisión de Juan).
+  Confirmar que el cron diario `/api/cron/billing` corre (Vercel, 11:00 UTC).
 - **Post-deploy specs A-D (2026-07-17)**: (1) poner NOMBRE a los usuarios de
   Elegance desde /admin → detalle del cliente; (2) responder un ticket real y
   ver «{nombre} · hora» en la burbuja; (3) login con un agente real y

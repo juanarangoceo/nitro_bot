@@ -212,6 +212,7 @@ export async function runReminderSweep(): Promise<{ sent: number; skipped: numbe
     .select("id, wa_phone_number_id, message_limit, current_month_messages")
     .eq("is_active", true)
     .eq("reminders_enabled", true)
+    .eq("service_paused", false) // suspendido por pago: tampoco recordatorios
     .not("wa_phone_number_id", "is", null);
 
   for (const t of tenants ?? []) {

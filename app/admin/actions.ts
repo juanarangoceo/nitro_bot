@@ -142,6 +142,26 @@ export async function setTenantActive(fd: FormData): Promise<void> {
   revalidatePath(`/admin/clients/${tenantId}`);
 }
 
+// ── Suspender / reactivar el bot por pago (palanca de cobro) ────────────────
+// Independiente de «Pausar cliente» (is_active): suspendido, el bot calla en
+// silencio total sin consumir mensajes, pero el tenant sigue vivo (webhooks,
+// dashboard, catálogo). «Marcar pagada» la renovación también lo reactiva.
+export async function setServicePaused(fd: FormData): Promise<void> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const tenantId = String(fd.get("tenant_id") ?? "");
+  const paused = String(fd.get("paused") ?? "") === "true";
+  if (!tenantId) return;
+
+  await admin.from("tenants").update({ service_paused: paused }).eq("id", tenantId);
+  await logAudit(admin, {
+    adminId,
+    action: paused ? "service_suspend" : "service_resume",
+    tenantId,
+  });
+  revalidatePath("/admin");
+  revalidatePath(`/admin/clients/${tenantId}`);
+}
+
 // ── Editar datos del cliente (nombre / plan / fee / límite) ─────────────────
 // El `name` es lo que ve el cliente en su dashboard (marca personalizada).
 export async function updateTenantCommercial(fd: FormData): Promise<void> {

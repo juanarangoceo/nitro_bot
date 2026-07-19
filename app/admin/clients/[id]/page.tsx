@@ -9,6 +9,7 @@ import {
   createManualInvoice,
 } from "../../actions";
 import { DeleteManualInvoiceButton, MarkPaidButton } from "./mark-paid-button";
+import { ServicePausedButton } from "./service-paused-button";
 import { ADDON_MESSAGES, billingInfo, formatCop, formatDueDate } from "@/lib/billing";
 import { cartSettings } from "@/lib/carts/settings";
 import {
@@ -64,7 +65,7 @@ export default async function ClientDetailPage({
   const { data: t } = await admin
     .from("tenants")
     .select(
-      "id, name, slug, is_active, plan, monthly_fee, message_limit, current_month_messages, counter_period_start, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price, addon_enabled, pending_plan, test_phones, abandoned_carts_enabled, cart_settings"
+      "id, name, slug, is_active, service_paused, plan, monthly_fee, message_limit, current_month_messages, counter_period_start, system_prompt, business_info, shopify_domain, wa_phone_number_id, wa_display_name, wa_business_account_id, logo_url, brand_color, notification_email, reminders_enabled, voice_replies_enabled, voice_id, shipping_rules, billing_due_date, billing_status, addon_price, addon_enabled, pending_plan, test_phones, abandoned_carts_enabled, cart_settings"
     )
     .eq("id", id)
     .maybeSingle();
@@ -132,26 +133,36 @@ export default async function ClientDetailPage({
         </Link>
         <header className="mt-1 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-neutral-900">{t.name}</h1>
+            <h1 className="text-2xl font-semibold text-neutral-900">
+              {t.name}
+              {t.service_paused ? (
+                <span className="ml-2 align-middle rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
+                  Bot suspendido por pago 🚫
+                </span>
+              ) : null}
+            </h1>
             <p className="text-sm text-neutral-500">
               {t.slug} · {t.shopify_domain ?? "sin Shopify"} ·{" "}
               {t.wa_display_name ?? t.wa_phone_number_id ?? "sin WhatsApp"}
             </p>
           </div>
-          <form action={setTenantActive}>
-            <input type="hidden" name="tenant_id" value={t.id} />
-            <input type="hidden" name="active" value={(!t.is_active).toString()} />
-            <button
-              type="submit"
-              className={`rounded-lg px-4 py-2 text-sm font-medium ${
-                t.is_active
-                  ? "border border-neutral-300 text-neutral-700 hover:bg-neutral-100"
-                  : "bg-emerald-600 text-white hover:bg-emerald-700"
-              }`}
-            >
-              {t.is_active ? "Pausar cliente" : "Activar cliente"}
-            </button>
-          </form>
+          <div className="flex items-center gap-2">
+            <ServicePausedButton tenantId={t.id} paused={t.service_paused} />
+            <form action={setTenantActive}>
+              <input type="hidden" name="tenant_id" value={t.id} />
+              <input type="hidden" name="active" value={(!t.is_active).toString()} />
+              <button
+                type="submit"
+                className={`rounded-lg px-4 py-2 text-sm font-medium ${
+                  t.is_active
+                    ? "border border-neutral-300 text-neutral-700 hover:bg-neutral-100"
+                    : "bg-emerald-600 text-white hover:bg-emerald-700"
+                }`}
+              >
+                {t.is_active ? "Pausar cliente" : "Activar cliente"}
+              </button>
+            </form>
+          </div>
         </header>
       </div>
 

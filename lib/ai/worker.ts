@@ -422,6 +422,14 @@ export async function processInboundMessage(params: {
     return; // un humano tiene la conversación, o está cerrada.
   }
 
+  // 4b) Suspensión manual por pago (tenants.service_paused, botón en /admin):
+  //     el bot calla en silencio total y NO consume mensajes. Los números de
+  //     prueba siguen funcionando para poder verificar antes de reactivar.
+  if (tenant.service_paused && !isTest) {
+    console.warn(`[worker] tenant ${tenant.id} suspendido por pago; no respondo.`);
+    return;
+  }
+
   // 5) Contador de consumo atómico + corte al pasar el límite.
   //    Conversaciones de prueba: NO descuentan (ni alertan créditos) y el bot
   //    responde aunque el tenant esté al límite — para eso son las pruebas.
@@ -440,8 +448,8 @@ export async function processInboundMessage(params: {
   }
   // Ciclo de facturación (lib/billing-cycle): genera factura del adicional al
   // agotar el plan (si el tenant lo tiene activado), la de renovación al 80%
-  // del ciclo, alerta por Telegram en los cruces y decide si el bot responde.
-  // Agotado plan + adicional sin pago registrado → pausa (palanca de cobro).
+  // del ciclo y alerta por Telegram en los cruces. Agotado el total → MODO
+  // GRACIA: sigue respondiendo; la pausa es manual (gate 4b, service_paused).
   if (counter) {
     const billing = await processBillingOnMessage(tenant, counter);
     if (!billing.allowed) {

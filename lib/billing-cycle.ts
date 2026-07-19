@@ -4,11 +4,15 @@
 //   2. Factura de «renovación» al 80% del total del ciclo (plan, o plan+2.000
 //      si entró el adicional) o 10 días antes del corte — una por ciclo
 //      (unique index invoices_cycle_key).
-//   3. Agotado el total sin pagar → el bot se pausa (palanca de cobro).
-//   4. Pagar la renovación (botón en /admin) resetea el contador a 0 y corre
-//      el corte a pago + 1 mes; pagar el adicional solo limpia la deuda.
+//   3. Agotado el total sin pagar → MODO GRACIA (decisión 2026-07-19): el bot
+//      SIGUE respondiendo; la pausa es manual (tenants.service_paused, botón
+//      «Suspender bot por pago» en /admin). Telegram sostiene la urgencia:
+//      alerta en el cruce + recordatorio diario (sendOverduePaymentAlerts).
+//   4. Pagar la renovación (botón en /admin) resetea el contador a 0, corre
+//      el corte a pago + 1 mes y REACTIVA el bot si estaba suspendido por
+//      pago; pagar el adicional solo limpia la deuda.
 // Las escrituras de facturas/alertas son best-effort: un fallo aquí jamás
-// tumba la respuesta del bot. La decisión responder/pausar SÍ es firme.
+// tumba la respuesta del bot.
 
 import { createAdminClient } from "./supabase/admin";
 import { sendTelegramAlert, escTelegram } from "./notify/telegram";
@@ -81,8 +85,10 @@ async function ensureInvoice(
 }
 
 // Procesa el consumo de UN mensaje ya contado (counter viene del RPC
-// increment_message_counter). Decide si el bot puede responder y genera
-// facturas/alertas en los cruces. La llama el worker en cada mensaje real.
+// increment_message_counter). Genera facturas/alertas en los cruces y activa
+// el ciclo nuevo si había un pago programado. Desde 2026-07-19 ya NO pausa:
+// devuelve allowed: false solo si algún día vuelve una regla automática; hoy
+// la suspensión es manual (tenants.service_paused, gate en el worker).
 export async function processBillingOnMessage(
   tenant: BillingTenant,
   counter: Counter
@@ -96,22 +102,10 @@ export async function processBillingOnMessage(
 
   try {
     // Plan agotado con adicional activado → factura del adicional (una vez).
-    // Vigencia: con la factura PENDIENTE, el adicional vence a los 15 días
-    // (puente de cobro); pagada, manda solo el tope de mensajes.
+    // El vencimiento a 15 días ya NO pausa solo: el recordatorio diario del
+    // cron (sendOverduePaymentAlerts) avisa a Juan para que decida suspender.
     if (count > planLimit && addonOn) {
       const addonInv = await ensureInvoice(tenant, "adicional", Number(tenant.addon_price));
-      if (
-        addonInv.status === "pendiente" &&
-        Date.now() - new Date(addonInv.createdAt).getTime() >
-          ADDON_PENDING_DAYS * 24 * 60 * 60 * 1000
-      ) {
-        // Renovación pagada en espera → el ciclo nuevo arranca aquí mismo.
-        if (await tryActivateQueuedRenewal(tenant)) return { allowed: true };
-        console.warn(
-          `[billing] tenant ${tenant.id}: adicional vencido (${ADDON_PENDING_DAYS} días sin pago); pausado.`
-        );
-        return { allowed: false };
-      }
       if (addonInv.created) {
         await sendTelegramAlert(
           `🟠 <b>${escTelegram(tenant.name)}</b> agotó su plan (${planLimit.toLocaleString(
@@ -120,7 +114,7 @@ export async function processBillingOnMessage(
             "es-CO"
           )}. Factura pendiente: ${escTelegram(
             formatCop(Number(tenant.addon_price))
-          )} (vence en ${ADDON_PENDING_DAYS} días si no se registra el pago).`
+          )} (vence en ${ADDON_PENDING_DAYS} días; si no paga te aviso a diario).`
         );
       }
     }
@@ -147,24 +141,24 @@ export async function processBillingOnMessage(
     }
 
     // Agotado el total del ciclo: si la renovación ya está pagada (pago
-    // anticipado programado), el ciclo nuevo arranca solo y el bot sigue;
-    // si no, pausa (alerta solo en el cruce exacto: el contador pasa por
-    // cada valor una sola vez).
+    // anticipado programado), el ciclo nuevo arranca solo; si no, MODO
+    // GRACIA: el bot sigue respondiendo y Juan decide con el botón de
+    // /admin. Alerta solo en el cruce exacto (el contador pasa por cada
+    // valor una sola vez); el recordatorio diario lo mantiene el cron.
     if (count > effectiveLimit) {
       if (await tryActivateQueuedRenewal(tenant)) return { allowed: true };
       if (count === effectiveLimit + 1) {
         await sendTelegramAlert(
           `🔴 <b>${escTelegram(tenant.name)}</b> agotó ${effectiveLimit.toLocaleString(
             "es-CO"
-          )} mensajes${addonOn ? " (plan + adicional)" : ""}: su bot DEJÓ de responder. ` +
-            `Al registrar el pago de la renovación en /admin el ciclo arranca de nuevo.`
+          )} mensajes${addonOn ? " (plan + adicional)" : ""} con la renovación SIN pagar: ` +
+            `entró en MODO GRACIA — el bot sigue respondiendo por cortesía. ` +
+            `Si no registra el pago, suspéndelo desde /admin («Suspender bot por pago»).`
         );
       }
-      return { allowed: false };
     }
   } catch (e) {
-    // Best-effort: si facturas/alertas fallan, el bot responde igual mientras
-    // haya créditos (la pausa de arriba retorna antes de llegar aquí).
+    // Best-effort: si facturas/alertas fallan, el bot responde igual.
     console.error("[billing] processBillingOnMessage falló:", e);
   }
 
@@ -341,10 +335,87 @@ export async function markInvoicePaid(
       // Quedan créditos: el arranque queda programado (worker/cron lo activan).
       queued = true;
     }
+
+    // Pagó la renovación → si el bot estaba suspendido por pago (botón de
+    // /admin), se reactiva solo: un único paso para Juan (decisión 2026-07-19).
+    await admin
+      .from("tenants")
+      .update({ service_paused: false })
+      .eq("id", invoice.tenant_id)
+      .eq("service_paused", true);
   }
 
   await refreshBillingStatus(invoice.tenant_id);
   return { ok: true, concept: invoice.concept, queued };
+}
+
+// Cron diario: recordatorios a Juan por Telegram mientras haya cobro en
+// riesgo — como la pausa ya no es automática, la urgencia se sostiene con
+// un aviso al día por tenant: (a) en modo gracia (agotó el total del ciclo
+// con la renovación pendiente) y (b) adicional pendiente ya vencido (>15
+// días). Los tenants ya suspendidos no repiten aviso (Juan ya actuó).
+export async function sendOverduePaymentAlerts(): Promise<number> {
+  const admin = createAdminClient();
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  let sent = 0;
+
+  const { data: tenants, error } = await admin
+    .from("tenants")
+    .select(
+      "id, name, current_month_messages, message_limit, monthly_fee, addon_price, addon_enabled, service_paused, counter_period_start"
+    )
+    .eq("is_active", true)
+    .eq("service_paused", false)
+    .not("monthly_fee", "is", null);
+  if (error) throw new Error(`billing cron (recordatorios): ${error.message}`);
+
+  for (const t of tenants ?? []) {
+    const addonOn = t.addon_enabled === true && t.addon_price != null;
+    const effective = t.message_limit + (addonOn ? ADDON_MESSAGES : 0);
+
+    // (a) Modo gracia: total agotado y la renovación del ciclo sigue pendiente.
+    if (t.current_month_messages > effective) {
+      const { count } = await admin
+        .from("invoices")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", t.id)
+        .eq("concept", "renovacion")
+        .eq("status", "pendiente")
+        .eq("cycle_start", t.counter_period_start);
+      if ((count ?? 0) > 0) {
+        await sendTelegramAlert(
+          `🔴 <b>${escTelegram(t.name)}</b> sigue en MODO GRACIA: ` +
+            `${t.current_month_messages.toLocaleString("es-CO")}/${effective.toLocaleString(
+              "es-CO"
+            )} msgs y la renovación de ${escTelegram(
+              formatCop(Number(t.monthly_fee))
+            )} sigue pendiente. Suspéndelo desde /admin si no hay pago.`
+        );
+        sent++;
+      }
+    }
+
+    // (b) Adicional vencido: factura pendiente con más de 15 días.
+    const { data: overdueAddon } = await admin
+      .from("invoices")
+      .select("amount, due_date")
+      .eq("tenant_id", t.id)
+      .eq("concept", "adicional")
+      .eq("status", "pendiente")
+      .lt("due_date", today)
+      .limit(1)
+      .maybeSingle();
+    if (overdueAddon) {
+      await sendTelegramAlert(
+        `🟠 <b>${escTelegram(t.name)}</b>: el paquete adicional de ${escTelegram(
+          formatCop(Number(overdueAddon.amount))
+        )} venció el ${overdueAddon.due_date} y sigue sin pago. ` +
+          `El bot sigue activo — decide si suspenderlo desde /admin.`
+      );
+      sent++;
+    }
+  }
+  return sent;
 }
 
 // Cron diario: arranca el ciclo de los tenants cuyo corte YA llegó y tienen
