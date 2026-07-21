@@ -20,7 +20,9 @@ export const DEFAULT_TICKET_LABELS = [
 // pasa una inválida) y para los escalados automáticos del worker. Los nombres
 // son los de DEFAULT_TICKET_LABELS: si el tenant renombró la etiqueta, el
 // match falla y el ticket queda sin etiqueta (visible para todos) — nunca se
-// pierde.
+// pierde. `video_recibido` va SIN etiqueta a propósito: un video puede ser de
+// garantía, logística o venta, y encasillarlo dejaba el ticket invisible para
+// los agentes de otras etiquetas (visibilidad estricta de 0024).
 export const REASON_TO_LABEL: Record<string, string> = {
   reclamo: "Reclamos",
   pide_humano: "Servicio al cliente",
@@ -28,7 +30,6 @@ export const REASON_TO_LABEL: Record<string, string> = {
   fuera_de_catalogo: "Ventas",
   otro: "Servicio al cliente",
   fallo_tecnico: "Servicio al cliente",
-  video_recibido: "Servicio al cliente",
 };
 
 // Etiquetas activas del tenant en orden ESTABLE (created_at, name): el enum

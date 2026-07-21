@@ -7,7 +7,14 @@
 
 import { getDashboardContext } from "@/lib/dashboard/context";
 import { getTenantBySlug } from "@/lib/tenant";
-import { sendText, sendImage, sendAudio, uploadMedia, type WaCreds } from "@/lib/whatsapp/meta";
+import {
+  sendText,
+  sendImage,
+  sendAudio,
+  sendVideo,
+  uploadMedia,
+  type WaCreds,
+} from "@/lib/whatsapp/meta";
 import { uploadWaMedia } from "@/lib/storage";
 import { revalidatePath } from "next/cache";
 import crypto from "node:crypto";
@@ -72,10 +79,14 @@ export async function replyToTicket(
   return { ok: true, error: null };
 }
 
-// Envía una foto o un audio al cliente desde el panel. Sube el archivo a Meta
-// (uploadMedia → media_id), lo manda por la Cloud API, lo persiste en Storage
-// para el historial y pasa la conversación a 'human_active'.
-const MAX_MEDIA_BYTES = 16 * 1024 * 1024; // 16 MB (límite cómodo para WhatsApp)
+// Envía una foto, un audio o un video al cliente desde el panel. Sube el
+// archivo a Meta (uploadMedia → media_id), lo manda por la Cloud API, lo
+// persiste en Storage para el historial y pasa la conversación a 'human_active'.
+const MAX_MEDIA_BYTES = 16 * 1024 * 1024; // 16 MB (límite de WhatsApp para video)
+
+// WhatsApp solo acepta estos contenedores de video (H.264 + AAC). Un .mov de
+// iPhone (video/quicktime) o un .webm serían rechazados por Meta.
+const VIDEO_MIMES = new Set(["video/mp4", "video/3gpp"]);
 
 export async function sendMediaFromAgent(
   _prev: ReplyState,
@@ -90,13 +101,20 @@ export async function sendMediaFromAgent(
   if (file.size > MAX_MEDIA_BYTES) return { ok: false, error: "El archivo es muy grande." };
 
   const mime = file.type || "application/octet-stream";
-  const kind: "image" | "audio" = mime.startsWith("image/")
-    ? "image"
-    : mime.startsWith("audio/")
-      ? "audio"
-      : (() => {
-          throw new Error("Solo se admiten imágenes o audios.");
-        })();
+  let kind: "image" | "audio" | "video";
+  if (mime.startsWith("image/")) kind = "image";
+  else if (mime.startsWith("audio/")) kind = "audio";
+  else if (mime.startsWith("video/")) {
+    if (!VIDEO_MIMES.has(mime.split(";")[0].trim().toLowerCase())) {
+      return {
+        ok: false,
+        error: "WhatsApp solo acepta videos MP4. Convierte el video a MP4 e inténtalo de nuevo.",
+      };
+    }
+    kind = "video";
+  } else {
+    return { ok: false, error: "Solo se admiten imágenes, audios o videos MP4." };
+  }
 
   // Conversación del tenant (RLS) + teléfono.
   const { data: conv } = await supabase
@@ -118,11 +136,18 @@ export async function sendMediaFromAgent(
 
   try {
     const bytes = Buffer.from(await file.arrayBuffer());
-    const mediaId = await uploadMedia(wa, bytes, mime, file.name || `media.${kind}`);
+    const mediaId = await uploadMedia(
+      wa,
+      bytes,
+      mime,
+      file.name || (kind === "video" ? "media.mp4" : `media.${kind}`)
+    );
     const waId =
       kind === "image"
         ? await sendImage(wa, conv.customer_phone, { id: mediaId })
-        : await sendAudio(wa, conv.customer_phone, { id: mediaId });
+        : kind === "audio"
+          ? await sendAudio(wa, conv.customer_phone, { id: mediaId })
+          : await sendVideo(wa, conv.customer_phone, { id: mediaId });
 
     // Persistir en Storage para mostrarlo en el historial del panel (best-effort).
     let mediaPath: string | null = null;
@@ -144,7 +169,8 @@ export async function sendMediaFromAgent(
       wa_message_id: waId,
       sender: "agent",
       msg_type: kind,
-      content: kind === "image" ? "[imagen]" : "[nota de voz]",
+      content:
+        kind === "image" ? "[imagen]" : kind === "audio" ? "[nota de voz]" : "[video]",
       media_path: mediaPath,
       media_mime: mime,
       sent_by: user.id,

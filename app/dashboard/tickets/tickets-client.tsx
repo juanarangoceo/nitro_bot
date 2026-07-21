@@ -248,7 +248,7 @@ export function TicketsClient({
             {replyState.error && <p className="mt-2 text-sm text-red-600">{replyState.error}</p>}
           </form>
 
-          {/* Enviar foto o audio */}
+          {/* Enviar foto, audio o video (WhatsApp solo acepta video MP4) */}
           <form
             key={`media-${mediaKey}`}
             action={mediaAction}
@@ -258,7 +258,7 @@ export function TicketsClient({
             <input
               type="file"
               name="file"
-              accept="image/*,audio/*"
+              accept="image/*,audio/*,video/mp4,video/3gpp"
               className="flex-1 text-xs text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-xs file:text-neutral-700"
             />
             <button
@@ -266,7 +266,7 @@ export function TicketsClient({
               disabled={sendingMedia}
               className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-60"
             >
-              {sendingMedia ? "Enviando…" : "Enviar foto/audio"}
+              {sendingMedia ? "Enviando…" : "Enviar foto/audio/video"}
             </button>
             {mediaState.error && <p className="text-xs text-red-600">{mediaState.error}</p>}
           </form>

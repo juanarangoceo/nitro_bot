@@ -181,6 +181,42 @@ export async function sendAudio(
   return json?.messages?.[0]?.id ?? null;
 }
 
+// Envía un video al cliente. Acepta `link` o `id` (uploadMedia). WhatsApp solo
+// admite video/mp4 y video/3gpp con códecs H.264+AAC (máx 16 MB); un formato
+// distinto hace fallar el envío en Meta, no aquí.
+export async function sendVideo(
+  creds: WaCreds,
+  to: string,
+  media: { link?: string; id?: string; caption?: string }
+): Promise<string | null> {
+  const video: Record<string, string> = {};
+  if (media.id) video.id = media.id;
+  else if (media.link) video.link = media.link;
+  if (media.caption) video.caption = media.caption;
+
+  const res = await fetch(`${GRAPH_BASE}/${creds.phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${creds.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "video",
+      video,
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      `Meta sendVideo falló (${res.status}): ${JSON.stringify(json?.error ?? json)}`
+    );
+  }
+  return json?.messages?.[0]?.id ?? null;
+}
+
 // Sube un binario a la media library del número y devuelve su media_id, listo
 // para enviar con sendImage/sendAudio por `id`. Necesario para media que NO
 // tiene URL pública (p.ej. una foto que el agente sube desde el panel).
