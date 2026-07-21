@@ -165,7 +165,7 @@ export const toolDeclarations = [
   {
     name: "enviar_video_producto",
     description:
-      "Envía al cliente el video de un producto del catálogo por WhatsApp. Úsala SOLO cuando el cliente pida ver un video, demostración o el producto en movimiento. Si el producto no tiene video, la herramienta te lo dice: en ese caso ofrece las fotos (enviar_imagen_producto), NO escales por esto. El video se envía SOLO, sin texto: tu respuesta de texto normal lo acompaña.",
+      "Envía al cliente el video de un producto del catálogo por WhatsApp. Úsala SOLO cuando el cliente pida ver un video, demostración o el producto en movimiento. Si la herramienta responde sin_video, escala con escalar_a_humano (motivo video_no_disponible) para que una persona del equipo le comparta el video. El video se envía SOLO, sin texto: tu respuesta de texto normal lo acompaña.",
     parameters: {
       type: "object",
       properties: {
@@ -182,13 +182,20 @@ export const toolDeclarations = [
   {
     name: "escalar_a_humano",
     description:
-      "Escala la conversación a un agente humano y el asesor DEJA de responder: es el ÚLTIMO recurso. Úsala SOLO si: (a) el cliente tiene un reclamo o problema con un pedido ya realizado, (b) pide explícitamente hablar con una persona, (c) pide un producto que confirmaste que NO existe llamando buscar_productos en este mismo turno, o (d) quiere corregir o cambiar una orden que YA fue creada (motivo cambio_en_orden). NUNCA escales por preguntas de envíos, garantías, devoluciones, precios o disponibilidad: eso lo respondes tú con las herramientas y la información de la empresa.",
+      "Escala la conversación a un agente humano y el asesor DEJA de responder: es el ÚLTIMO recurso. Úsala SOLO si: (a) el cliente tiene un reclamo o problema con un pedido ya realizado, (b) pide explícitamente hablar con una persona, (c) pide un producto que confirmaste que NO existe llamando buscar_productos en este mismo turno, (d) quiere corregir o cambiar una orden que YA fue creada (motivo cambio_en_orden), o (e) pidió video de un producto y enviar_video_producto respondió sin_video en este mismo turno (motivo video_no_disponible). NUNCA escales por preguntas de envíos, garantías, devoluciones, precios o disponibilidad: eso lo respondes tú con las herramientas y la información de la empresa.",
     parameters: {
       type: "object",
       properties: {
         motivo: {
           type: "string",
-          enum: ["reclamo", "fuera_de_catalogo", "pide_humano", "cambio_en_orden", "otro"],
+          enum: [
+            "reclamo",
+            "fuera_de_catalogo",
+            "pide_humano",
+            "cambio_en_orden",
+            "video_no_disponible",
+            "otro",
+          ],
         },
       },
       required: ["motivo"],
@@ -586,7 +593,7 @@ async function enviarVideoProducto(ctx: ToolContext, args: Args) {
       nota: "sin_video",
       titulo: prod.title,
       detalle:
-        "Este producto no tiene video. Dilo con naturalidad y ofrece las fotos con enviar_imagen_producto; NO escales por esto.",
+        "Este producto no tiene video en el sistema. Escala con escalar_a_humano (motivo video_no_disponible) y dile al cliente que una persona del equipo le compartirá el video en breve.",
     };
   }
 
@@ -666,6 +673,17 @@ async function escalarAHumano(ctx: ToolContext, args: Args) {
       escalado: false,
       error:
         "Primero busca en el catálogo con buscar_productos; escala solo si confirmas que no existe.",
+    };
+  }
+  // "video no disponible" exige haberlo intentado con la herramienta antes.
+  if (
+    motivo === "video_no_disponible" &&
+    !ctx.calledTools?.has("enviar_video_producto")
+  ) {
+    return {
+      escalado: false,
+      error:
+        "Primero intenta enviar el video con enviar_video_producto; escala solo si responde sin_video.",
     };
   }
   // Etiqueta del ticket: la elección de la IA (enum por tenant) con fallback

@@ -66,20 +66,39 @@ function buildImageUrls(n: ProductNode): string[] {
 // Videos de producto enviables por WhatsApp: de cada video de la galería se
 // elige la rendition MP4 de mayor resolución que quepa en 16 MB (tope de la
 // Cloud API). Shopify transcodifica a H.264/AAC, el códec que WhatsApp exige.
+// OJO: `fileSize` viene NULL en las renditions transcodificadas (verificado
+// 2026-07-21 contra la tienda real): el tamaño se confirma con un HEAD al CDN.
 const WA_VIDEO_MAX_BYTES = 16 * 1024 * 1024;
-function buildVideoUrls(n: ProductNode): string[] {
+
+async function sourceSizeOk(s: {
+  url: string;
+  fileSize: number | null;
+}): Promise<boolean> {
+  if (s.fileSize != null) return s.fileSize <= WA_VIDEO_MAX_BYTES;
+  try {
+    const head = await fetch(s.url, { method: "HEAD" });
+    const len = Number(head.headers.get("content-length"));
+    return head.ok && Number.isFinite(len) && len > 0 && len <= WA_VIDEO_MAX_BYTES;
+  } catch {
+    return false; // sin tamaño confirmable no se arriesga un fallo de Meta
+  }
+}
+
+export async function buildVideoUrls(n: {
+  media?: ProductNode["media"];
+}): Promise<string[]> {
   const urls: string[] = [];
   for (const e of n.media?.edges ?? []) {
     if (e.node.mediaContentType !== "VIDEO") continue;
-    const best = (e.node.sources ?? [])
-      .filter(
-        (s) =>
-          s.url &&
-          (s.mimeType ?? "").startsWith("video/mp4") &&
-          (s.fileSize ?? Infinity) <= WA_VIDEO_MAX_BYTES
-      )
-      .sort((a, b) => (b.height ?? 0) - (a.height ?? 0))[0];
-    if (best) urls.push(best.url);
+    const mp4s = (e.node.sources ?? [])
+      .filter((s) => s.url && (s.mimeType ?? "").startsWith("video/mp4"))
+      .sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
+    for (const s of mp4s) {
+      if (await sourceSizeOk(s)) {
+        urls.push(s.url);
+        break; // la mejor rendition que cabe; siguiente video
+      }
+    }
   }
   return [...new Set(urls)];
 }
@@ -110,7 +129,7 @@ async function upsertProductNode(tenantId: string, n: ProductNode): Promise<void
       stock: n.totalInventory,
       image_url: n.featuredImage?.url ?? null,
       image_urls: buildImageUrls(n),
-      video_urls: buildVideoUrls(n),
+      video_urls: await buildVideoUrls(n),
       status: (n.status ?? "active").toLowerCase(),
       embedding: embedding as unknown as string, // pgvector acepta el array
       updated_at: new Date().toISOString(),
