@@ -4,7 +4,13 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { MessageBody } from "../message-body";
-import { replyToTicket, resolveTicket, sendMediaFromAgent, type ReplyState } from "./actions";
+import {
+  prepareAgentMediaUpload,
+  replyToTicket,
+  resolveTicket,
+  sendUploadedMediaFromAgent,
+  type ReplyState,
+} from "./actions";
 
 export type TicketRow = {
   id: string;
@@ -43,7 +49,9 @@ export function TicketsClient({
   const [selected, setSelected] = useState<TicketRow | null>(initialTickets[0] ?? null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [replyState, replyAction, replying] = useActionState(replyToTicket, replyInit);
-  const [mediaState, mediaAction, sendingMedia] = useActionState(sendMediaFromAgent, replyInit);
+  const [sendingMedia, setSendingMedia] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const mediaFileRef = useRef<HTMLInputElement>(null);
   const supabaseRef = useRef<ReturnType<typeof createBrowserSupabase> | null>(null);
 
   if (!supabaseRef.current) supabaseRef.current = createBrowserSupabase();
@@ -130,10 +138,38 @@ export function TicketsClient({
     if (replyState.ok) setFormKey((k) => k + 1);
   }, [replyState.ok]);
 
-  const [mediaKey, setMediaKey] = useState(0);
-  useEffect(() => {
-    if (mediaState.ok) setMediaKey((k) => k + 1);
-  }, [mediaState.ok]);
+  // El archivo NO viaja por la Server Action (Vercel corta el body en 4,5 MB
+  // y un video de WhatsApp llega a 16 MB): se pide una URL firmada, se sube
+  // DIRECTO a Supabase Storage desde el navegador y una action liviana lo
+  // envía por WhatsApp.
+  async function handleSendMedia(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const file = mediaFileRef.current?.files?.[0];
+    const conversationId = selected?.conversation_id;
+    if (!conversationId) return;
+    if (!file || file.size === 0) {
+      setMediaError("Selecciona un archivo.");
+      return;
+    }
+    setSendingMedia(true);
+    setMediaError(null);
+    try {
+      const mime = file.type || "application/octet-stream";
+      const prep = await prepareAgentMediaUpload(conversationId, mime, file.size);
+      if (!prep.ok) throw new Error(prep.error);
+      const { error: upErr } = await supabase.storage
+        .from("wa-media")
+        .uploadToSignedUrl(prep.path, prep.token, file, { contentType: mime });
+      if (upErr) throw new Error("No se pudo subir el archivo. Inténtalo de nuevo.");
+      const sent = await sendUploadedMediaFromAgent(conversationId, prep.path, mime);
+      if (sent.error) throw new Error(sent.error);
+      if (mediaFileRef.current) mediaFileRef.current.value = "";
+    } catch (err) {
+      setMediaError((err as Error).message);
+    } finally {
+      setSendingMedia(false);
+    }
+  }
 
   // Auto-scroll al fondo del panel de mensajes (al cargar y con cada mensaje).
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -250,12 +286,11 @@ export function TicketsClient({
 
           {/* Enviar foto, audio o video (WhatsApp solo acepta video MP4) */}
           <form
-            key={`media-${mediaKey}`}
-            action={mediaAction}
+            onSubmit={handleSendMedia}
             className="flex items-center gap-2 border-t border-neutral-100 p-3"
           >
-            <input type="hidden" name="conversation_id" value={selected.conversation_id} />
             <input
+              ref={mediaFileRef}
               type="file"
               name="file"
               accept="image/*,audio/*,video/mp4,video/3gpp"
@@ -268,7 +303,7 @@ export function TicketsClient({
             >
               {sendingMedia ? "Enviando…" : "Enviar foto/audio/video"}
             </button>
-            {mediaState.error && <p className="text-xs text-red-600">{mediaState.error}</p>}
+            {mediaError && <p className="text-xs text-red-600">{mediaError}</p>}
           </form>
         </div>
       ) : (

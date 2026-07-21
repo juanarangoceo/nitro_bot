@@ -51,6 +51,28 @@ export async function uploadWaMedia(params: {
   return path;
 }
 
+// URL firmada de SUBIDA para que el navegador cargue media directo al bucket
+// (el body de una Server Action en Vercel tope a 4,5 MB; los videos de
+// WhatsApp llegan a 16 MB). El token solo autoriza escribir ese path exacto.
+export async function createWaMediaUploadUrl(params: {
+  tenantId: string;
+  conversationId: string;
+  messageId: string;
+  mimeType: string;
+}): Promise<{ path: string; token: string }> {
+  const path = `${params.tenantId}/${params.conversationId}/${params.messageId}.${extFor(
+    params.mimeType
+  )}`;
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUploadUrl(path);
+  if (error || !data?.token) {
+    throw new Error(`Storage signed upload falló: ${error?.message ?? "sin token"}`);
+  }
+  return { path, token: data.token };
+}
+
 // Sube el logo del tenant al bucket PÚBLICO `branding` y devuelve la URL
 // pública con ?v= para reventar caché al reemplazarlo (la key es estable).
 export async function uploadTenantLogo(params: {
