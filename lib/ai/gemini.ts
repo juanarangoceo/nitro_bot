@@ -149,6 +149,7 @@ export async function runAssistant(params: {
     testMode,
     calledTools: new Set<string>(),
     sentImageUrls: new Set<string>(),
+    sentVideoUrls: new Set<string>(),
     ticketLabels,
   };
   const working: Content[] = [...contents];

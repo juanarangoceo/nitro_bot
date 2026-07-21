@@ -17,7 +17,10 @@ const PRODUCT_FIELDS = `
   status
   totalInventory
   featuredImage { url }
-  media(first: 10) { edges { node { mediaContentType ... on MediaImage { image { url } } } } }
+  media(first: 10) { edges { node { mediaContentType
+    ... on MediaImage { image { url } }
+    ... on Video { sources { url mimeType height fileSize } }
+  } } }
   priceRangeV2 { minVariantPrice { amount } }
   variants(first: 1) { edges { node { id compareAtPrice } } }
 `;
@@ -33,7 +36,18 @@ type ProductNode = {
   totalInventory: number | null;
   featuredImage: { url: string } | null;
   media: {
-    edges: { node: { mediaContentType: string; image?: { url: string } | null } }[];
+    edges: {
+      node: {
+        mediaContentType: string;
+        image?: { url: string } | null;
+        sources?: {
+          url: string;
+          mimeType: string | null;
+          height: number | null;
+          fileSize: number | null;
+        }[];
+      };
+    }[];
   };
   priceRangeV2: { minVariantPrice: { amount: string } } | null;
   variants: { edges: { node: { id: string; compareAtPrice: string | null } }[] };
@@ -47,6 +61,27 @@ function buildImageUrls(n: ProductNode): string[] {
     .map((e) => e.node.image!.url);
   const all = n.featuredImage?.url ? [n.featuredImage.url, ...gallery] : gallery;
   return [...new Set(all)];
+}
+
+// Videos de producto enviables por WhatsApp: de cada video de la galería se
+// elige la rendition MP4 de mayor resolución que quepa en 16 MB (tope de la
+// Cloud API). Shopify transcodifica a H.264/AAC, el códec que WhatsApp exige.
+const WA_VIDEO_MAX_BYTES = 16 * 1024 * 1024;
+function buildVideoUrls(n: ProductNode): string[] {
+  const urls: string[] = [];
+  for (const e of n.media?.edges ?? []) {
+    if (e.node.mediaContentType !== "VIDEO") continue;
+    const best = (e.node.sources ?? [])
+      .filter(
+        (s) =>
+          s.url &&
+          (s.mimeType ?? "").startsWith("video/mp4") &&
+          (s.fileSize ?? Infinity) <= WA_VIDEO_MAX_BYTES
+      )
+      .sort((a, b) => (b.height ?? 0) - (a.height ?? 0))[0];
+    if (best) urls.push(best.url);
+  }
+  return [...new Set(urls)];
 }
 
 // Texto que se convierte en embedding: lo que un cliente preguntaría.
@@ -75,6 +110,7 @@ async function upsertProductNode(tenantId: string, n: ProductNode): Promise<void
       stock: n.totalInventory,
       image_url: n.featuredImage?.url ?? null,
       image_urls: buildImageUrls(n),
+      video_urls: buildVideoUrls(n),
       status: (n.status ?? "active").toLowerCase(),
       embedding: embedding as unknown as string, // pgvector acepta el array
       updated_at: new Date().toISOString(),
