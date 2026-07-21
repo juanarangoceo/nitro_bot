@@ -15,7 +15,11 @@ import { bogotaDayStart } from "../dates";
 const OPS_MODEL = "gemini-3.5-flash";
 const GEMINI_TIMEOUT_MS = 15_000;
 
-async function geminiText(system: string, userText: string): Promise<string | null> {
+async function geminiText(
+  system: string,
+  userText: string,
+  usageSource: string
+): Promise<string | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
@@ -37,6 +41,31 @@ async function geminiText(system: string, userText: string): Promise<string | nu
       if (!res.ok || json.error) {
         console.error("[telegram-ai] Gemini falló:", json.error?.message ?? res.status);
         return null;
+      }
+      // Medición de tokens en la misma traza gemini_usage de /admin/health.
+      // Insert directo (no logEvent: events.ts importa este módulo y sería
+      // un import circular). Best-effort.
+      const u = json.usageMetadata as
+        | { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }
+        | undefined;
+      if (u) {
+        try {
+          await createAdminClient()
+            .from("event_log")
+            .insert({
+              kind: "gemini_usage",
+              severity: "info",
+              detail: {
+                calls: 1,
+                promptTokens: u.promptTokenCount ?? 0,
+                outputTokens: u.candidatesTokenCount ?? 0,
+                thoughtsTokens: u.thoughtsTokenCount ?? 0,
+                source: usageSource,
+              },
+            });
+        } catch {
+          // la medición jamás bloquea la respuesta
+        }
       }
       const text = ((json.candidates?.[0]?.content?.parts ?? []) as { text?: string }[])
         .map((p) => p.text ?? "")
@@ -63,7 +92,7 @@ export async function explainAlertBrief(params: {
     "Eres el asistente de operaciones de Nitro Bot, un SaaS que automatiza ventas por WhatsApp con IA para tiendas Shopify (webhook de Meta → worker → Gemini → respuesta; dashboard para las tiendas; panel /admin del dueño). " +
     "Te paso un evento de error del sistema. Explica al DUEÑO en español sencillo y en MÁXIMO 2 frases: qué significa y si requiere acción suya o puede esperar. Sin tecnicismos innecesarios, sin markdown, sin saludos.";
   const text = `Evento: ${params.kind}\nDetalle: ${JSON.stringify(params.detail ?? {}).slice(0, 600)}`;
-  const out = await geminiText(system, text);
+  const out = await geminiText(system, text, "alert_explain");
   return out ? out.slice(0, 400) : null;
 }
 
@@ -171,7 +200,7 @@ export async function answerOwnerQuestion(question: string): Promise<string> {
     `PREGUNTA DEL DUEÑO: ${question}`;
 
   const answer =
-    (await geminiText(system, userText)) ??
+    (await geminiText(system, userText, "telegram_assistant")) ??
     "No pude consultar la IA en este momento. Revisa /admin/health para el detalle, o inténtalo de nuevo en un minuto.";
 
   await supabase
