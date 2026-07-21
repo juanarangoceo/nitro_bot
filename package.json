@@ -16,7 +16,8 @@
     "seed:dashboard-user": "tsx scripts/seed-dashboard-user.ts",
     "seed:platform-admin": "tsx scripts/seed-platform-admin.ts",
     "verify": "tsx scripts/verify.ts",
-    "telegram:test": "tsx scripts/telegram-test.ts"
+    "telegram:test": "tsx scripts/telegram-test.ts",
+    "telegram:set-webhook": "tsx scripts/telegram-set-webhook.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

@@ -7,6 +7,7 @@
 
 import { createAdminClient } from "../supabase/admin";
 import { sendTelegramAlert, escTelegram } from "../notify/telegram";
+import { explainAlertBrief } from "../notify/telegram-ai";
 
 export type EventKind =
   | "assistant_error"
@@ -52,16 +53,24 @@ export async function logEvent(params: {
 
   // Los ERRORES también van al Telegram del dueño (punto único: cubre
   // assistant_error, escalation_auto, queue_failure, oauth_failure y futuros).
-  // sendTelegramAlert jamás lanza y es no-op sin las env vars.
+  // sendTelegramAlert jamás lanza y es no-op sin las env vars. La alerta va
+  // acompañada de una explicación breve de la IA (best-effort: si Gemini no
+  // responde, la alerta sale igual que siempre).
   if (params.severity === "error") {
     const detail = JSON.stringify(params.detail ?? {}).slice(0, 200);
+    const explanation = await explainAlertBrief({
+      kind: params.kind,
+      tenantId: params.tenantId,
+      detail: params.detail,
+    });
     await sendTelegramAlert(
       `🔴 <b>${escTelegram(params.kind)}</b>\n` +
         (params.tenantId ? `tenant: <code>${escTelegram(params.tenantId.slice(0, 8))}</code>\n` : "") +
         (params.conversationId
           ? `conv: <code>${escTelegram(params.conversationId.slice(0, 8))}</code>\n`
           : "") +
-        escTelegram(detail)
+        escTelegram(detail) +
+        (explanation ? `\n\n💬 ${escTelegram(explanation)}` : "")
     );
   }
 }

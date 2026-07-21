@@ -11,6 +11,7 @@ const ITEMS = [
   { href: "/admin/summary", label: "Resumen plataforma" },
   { href: "/admin/health", label: "Salud" },
   { href: "/admin/tester", label: "Probador" },
+  { href: "/admin/account", label: "Mi cuenta" },
 ];
 
 export function AdminSidebar({
