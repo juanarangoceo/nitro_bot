@@ -9,7 +9,7 @@ import { logSearch } from "./search-log";
 import { escalateToHuman } from "./escalation";
 import { createCodOrder, type OrderItem, type CustomerData } from "../shopify/orders";
 import { resolveDepartment } from "../shopify/colombia";
-import { sendImage, type WaCreds } from "../whatsapp/meta";
+import { sendImage, sendVideo, type WaCreds } from "../whatsapp/meta";
 import { resolveLabelId, type TicketLabel } from "../tickets/labels";
 import type { ShopifyCreds } from "../shopify/client";
 import type { Tenant } from "../tenant";
@@ -37,6 +37,8 @@ export type ToolContext = {
   // enviarImagenProducto). Evita repetir la misma foto en functionCalls
   // paralelos y cubre el modo dev sin conversación en DB.
   sentImageUrls?: Set<string>;
+  // Igual que sentImageUrls pero para videos de producto (enviarVideoProducto).
+  sentVideoUrls?: Set<string>;
   // Etiquetas activas del tenant (las carga runAssistant): alimentan el enum
   // de `etiqueta` en escalar_a_humano y la resolución del label del ticket.
   ticketLabels?: TicketLabel[];
@@ -155,6 +157,23 @@ export const toolDeclarations = [
           type: "boolean",
           description:
             "SOLO true si el cliente pide EXPLÍCITAMENTE que le reenvíes una foto que ya le mandaste. Por defecto la herramienta nunca repite fotos ya enviadas en la conversación.",
+        },
+      },
+      required: ["producto_id"],
+    },
+  },
+  {
+    name: "enviar_video_producto",
+    description:
+      "Envía al cliente el video de un producto del catálogo por WhatsApp. Úsala SOLO cuando el cliente pida ver un video, demostración o el producto en movimiento. Si el producto no tiene video, la herramienta te lo dice: en ese caso ofrece las fotos (enviar_imagen_producto), NO escales por esto. El video se envía SOLO, sin texto: tu respuesta de texto normal lo acompaña.",
+    parameters: {
+      type: "object",
+      properties: {
+        producto_id: { type: "string", description: "shopify_id del producto." },
+        reenviar: {
+          type: "boolean",
+          description:
+            "SOLO true si el cliente pide EXPLÍCITAMENTE que le reenvíes un video que ya le mandaste. Por defecto la herramienta nunca repite videos ya enviados en la conversación.",
         },
       },
       required: ["producto_id"],
@@ -542,6 +561,103 @@ async function enviarImagenProducto(ctx: ToolContext, args: Args) {
   }
 }
 
+// Envía el video del producto (si lo tiene) por WhatsApp. Mismo patrón del
+// guard de fotos: un video por producto por episodio de conversación, con
+// reenviar=true como única excepción explícita. Sin video → la IA ofrece
+// fotos (la descripción de la tool se lo instruye), jamás escala por esto.
+async function enviarVideoProducto(ctx: ToolContext, args: Args) {
+  const productoId = String(args.producto_id ?? "");
+  const reenviar = args.reenviar === true;
+  if (!productoId) return { enviado: false, error: "Falta el producto_id." };
+
+  const supabase = createAdminClient();
+  const { data: prod } = await supabase
+    .from("products")
+    .select("title, video_urls")
+    .eq("tenant_id", ctx.tenant.id)
+    .eq("shopify_id", productoId)
+    .maybeSingle();
+  if (!prod) return { enviado: false, error: "Producto no encontrado." };
+
+  const candidates = Array.isArray(prod.video_urls) ? (prod.video_urls as string[]) : [];
+  if (candidates.length === 0) {
+    return {
+      enviado: false,
+      nota: "sin_video",
+      titulo: prod.title,
+      detalle:
+        "Este producto no tiene video. Dilo con naturalidad y ofrece las fotos con enviar_imagen_producto; NO escales por esto.",
+    };
+  }
+
+  // Guard anti-repetición (patrón de enviar_imagen_producto): el video de un
+  // producto se manda UNA vez por episodio; reenviar=true ignora turnos
+  // anteriores pero nunca repite dentro del mismo turno.
+  const alreadySent = new Set(ctx.sentVideoUrls ?? []);
+  if (!reenviar && ctx.conversationId) {
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("closed_at")
+      .eq("id", ctx.conversationId)
+      .maybeSingle();
+    let sentQuery = supabase
+      .from("messages")
+      .select("media_url")
+      .eq("conversation_id", ctx.conversationId)
+      .eq("sender", "bot")
+      .eq("msg_type", "video")
+      .not("media_url", "is", null);
+    if (conv?.closed_at) sentQuery = sentQuery.gt("created_at", conv.closed_at);
+    const { data: sentRows } = await sentQuery;
+    for (const row of sentRows ?? []) alreadySent.add(row.media_url as string);
+  }
+
+  const url = candidates.find((u) => !alreadySent.has(u));
+  if (!url) {
+    return {
+      enviado: false,
+      nota: "video_ya_enviado",
+      titulo: prod.title,
+      detalle:
+        "Ya enviaste el video de este producto en esta conversación: NO lo repitas, responde con texto. Solo si el cliente pide que se lo reenvíes, usa reenviar=true.",
+    };
+  }
+
+  if (!ctx.wa || !ctx.customerPhone || !ctx.conversationId) {
+    // Sandbox (probador de /admin o dev/chat): se persiste el marcador para
+    // que el guard funcione entre turnos, igual que las fotos.
+    if (ctx.conversationId) {
+      await supabase.from("messages").insert({
+        tenant_id: ctx.tenant.id,
+        conversation_id: ctx.conversationId,
+        sender: "bot",
+        msg_type: "video",
+        content: `[video] ${prod.title ?? ""}`.trim(),
+        media_url: url,
+      });
+    }
+    ctx.sentVideoUrls?.add(url);
+    return { enviado: false, nota: "sin_destinatario_dev", video: url };
+  }
+
+  try {
+    const waId = await sendVideo(ctx.wa, ctx.customerPhone, { link: url });
+    await supabase.from("messages").insert({
+      tenant_id: ctx.tenant.id,
+      conversation_id: ctx.conversationId,
+      wa_message_id: waId,
+      sender: "bot",
+      msg_type: "video",
+      content: `[video] ${prod.title ?? ""}`.trim(),
+      media_url: url,
+    });
+    ctx.sentVideoUrls?.add(url);
+    return { enviado: true, titulo: prod.title };
+  } catch (e) {
+    return { enviado: false, error: (e as Error).message };
+  }
+}
+
 async function escalarAHumano(ctx: ToolContext, args: Args) {
   const motivo = String(args.motivo ?? "otro");
   // Guard server-side: "fuera de catálogo" exige haber buscado en este turno.
@@ -585,6 +701,7 @@ const HANDLERS: Record<string, (ctx: ToolContext, args: Args) => unknown> = {
   calcular_envio: calcularEnvio,
   crear_orden: crearOrden,
   enviar_imagen_producto: enviarImagenProducto,
+  enviar_video_producto: enviarVideoProducto,
   escalar_a_humano: escalarAHumano,
 };
 
