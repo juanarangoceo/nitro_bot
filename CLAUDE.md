@@ -937,7 +937,58 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     corte sin excedente→0, créditos vivos→programado intacto, cruce con pago
     programado 101/100→1, pending_plan + carry 160/100→60 con límite nuevo.
 
+- **Sesión 2026-07-21 — Videos: visibilidad, envío del agente y videos de
+  producto (3 deploys a producción: 40adaa3, 84de651, badccad; migración #32
+  aplicada; health OK)**:
+  - **Investigación "Elegance no ve los videos"**: la cadena técnica estaba
+    100% sana (4 videos entrantes H.264/AAC en Storage; e2e real con usuario
+    desechable contra producción: `/dashboard/media/[id]` → 307 → 206 con
+    Range). La causa era la **visibilidad estricta de tickets (0024)**: los
+    tickets `video_recibido` salían con etiqueta "Servicio al cliente" y los
+    agentes de otras etiquetas NO los veían. Fix: `video_recibido` se quitó
+    de `REASON_TO_LABEL` (ticket sin etiqueta = visible para todo el equipo);
+    los 2 tickets de video abiertos se destiquetaron a mano en la DB.
+  - **Envío de media del agente reescrito (fix de fondo)**: `sendVideo` nuevo
+    en meta.ts y Tickets acepta video MP4/3GP ≤16 MB… pero la prueba real de
+    Juan reveló que **Vercel corta el body de una función en 4,5 MB (límite
+    de PLATAFORMA, inconfigurable)** — el primer intento con
+    `bodySizeLimit: 17mb` (ab55f14) no bastó y se revirtió. Arquitectura
+    final (84de651): `prepareAgentMediaUpload` (valida sesión/conv/mime/
+    tamaño y firma URL con `createWaMediaUploadUrl` en storage.ts) → el
+    navegador sube DIRECTO a Supabase Storage (`uploadToSignedUrl`) →
+    `sendUploadedMediaFromAgent` (verifica prefijo del path anti
+    cross-tenant, baja de Storage, sube a Meta, envía, persiste). Verificado
+    con el video real de 13 MB + RLS bloquea escritura sin token. De paso
+    quedaron arreglados fotos/audios >1 MB del agente (rotos en silencio
+    desde siempre). Falta re-prueba de Juan post-deploy.
+  - **Videos de producto — el bot los envía (migración #32,
+    `products.video_urls`)**: la tienda sube el video a la GALERÍA del
+    producto en Shopify (media nativa; se descartaron metafields por
+    fricción). El sync pide `... on Video { sources }` y guarda la rendition
+    MP4 de mayor resolución que quepa en 16 MB (Shopify transcodifica a
+    H.264/AAC, lo que exige WhatsApp; `fileSize` viene en la API). Tool nueva
+    `enviar_video_producto`: solo cuando el cliente PIDE video/demostración,
+    envía por `link:` del CDN de Shopify (cero storage, cero tokens), guard
+    anti-repetición por episodio (patrón fotos, `msg_type='video'` +
+    `sentVideoUrls`), `reenviar=true` como excepción; sin video →
+    `sin_video` y la IA ofrece fotos SIN escalar (regla de prompt nueva).
+    Videos EXTERNOS (YouTube) no se pueden enviar como video de WhatsApp.
+    **Verificado 7/7**: sync real contra Shopify dev, guard 4 casos (conv
+    desechable), y Gemini real 2/2 (pide video → tool + pitch; sin video →
+    foto sin escalar). El panel ya reproduce estos videos sin cambios
+    (media_url externa → redirect).
+  - **Storage medido**: 80 MB totales tras ~3 semanas de Elegance (~100
+    MB/mes por tenant activo; videos entrantes = la mitad con 5 archivos).
+    Sin riesgo de cuota; retención de media = opción futura en el cron.
+
 ### 🔜 Pendiente
+- **Post-deploy videos (2026-07-21)**: (1) Juan re-prueba enviar el video MP4
+  desde Tickets (ya con subida directa a Storage); (2) Elegance sube un video
+  a un producto en su admin de Shopify → el webhook products/update lo
+  sincroniza solo → pedirle video al bot por WhatsApp ("¿tienes video de X?")
+  y confirmar que llega; (3) avisar a Elegance de las 3 novedades (mensaje ya
+  redactado en la sesión: tickets de video visibles para todos, envío de
+  videos desde Tickets, videos de producto).
 - **Prueba en vivo del modo gracia + suspensión + excedente (DESPLEGADO
   2026-07-19, push c9d1436, health OK)**: ver el badge y el botón «Suspender
   bot por pago» en /admin, suspender/reactivar un tenant de prueba, y
