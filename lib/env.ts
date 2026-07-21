@@ -61,6 +61,11 @@ export const env = {
   get TELEGRAM_CHAT_ID(): string | null {
     return process.env.TELEGRAM_CHAT_ID ?? null;
   },
+  // Secreto del webhook entrante de Telegram (asistente conversacional del
+  // dueño). Sin él, el webhook responde 404: el bot solo emite alertas.
+  get TELEGRAM_WEBHOOK_SECRET(): string | null {
+    return process.env.TELEGRAM_WEBHOOK_SECRET ?? null;
+  },
   // Resend (opcionales): sin ellas las notificaciones por correo son no-op.
   get RESEND_API_KEY(): string | null {
     return process.env.RESEND_API_KEY ?? null;
