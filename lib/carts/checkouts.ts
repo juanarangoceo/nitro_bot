@@ -10,6 +10,7 @@
 import { createAdminClient } from "../supabase/admin";
 import { logEvent } from "../ops/events";
 import { normalizeCoPhone } from "../shopify/orders";
+import { reminderDelivered } from "./delivery";
 import type { Tenant } from "../tenant";
 
 const ACTIVE_STATUSES = ["pending", "reminded_1", "reminded_2"] as const;
@@ -86,19 +87,20 @@ export async function processCheckoutWebhook(
 
   const { data: existing } = await supabase
     .from("abandoned_checkouts")
-    .select("id, status, reminder_1_sent_at")
+    .select("id, status, reminder_1_sent_at, reminder_1_delivery, reminder_2_delivery")
     .eq("tenant_id", tenant.id)
     .eq("checkout_token", token)
     .maybeSingle();
 
-  // Checkout completado: cerrar si está activo (recovered si ya se le recordó,
-  // cancelled si compró antes de cualquier recordatorio).
+  // Checkout completado: cerrar si está activo. recovered SOLO si algún
+  // recordatorio salió sin fallo constatado (reminderDelivered); si Meta no
+  // entregó, compró solo → cancelled.
   if (payload.completed_at) {
     if (!existing || !ACTIVE_STATUSES.includes(existing.status as never)) return;
     await supabase
       .from("abandoned_checkouts")
       .update({
-        status: existing.reminder_1_sent_at ? "recovered" : "cancelled",
+        status: reminderDelivered(existing) ? "recovered" : "cancelled",
         recovered_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -109,12 +111,33 @@ export async function processCheckoutWebhook(
   if (existing && !ACTIVE_STATUSES.includes(existing.status as never)) return;
 
   const phone = extractPhone(payload);
-  if (!phone) return;
+  if (!phone) {
+    // Sin teléfono no hay canal, pero la fuga debe poder medirse. Solo en la
+    // primera vez (sin fila previa): los updates repetidos no re-loguean.
+    if (!existing) {
+      await logEvent({
+        kind: "cart_reminder",
+        severity: "info",
+        tenantId: tenant.id,
+        detail: { stage: "no_phone", token },
+      });
+    }
+    return;
+  }
+
+  // Número bloqueado por el tenant: el checkout ni se persiste (silencio total).
+  const { data: blocked } = await supabase
+    .from("blocked_numbers")
+    .select("id")
+    .eq("tenant_id", tenant.id)
+    .eq("phone", phone)
+    .maybeSingle();
+  if (blocked) return;
 
   const lineItems = (payload.line_items ?? [])
     .slice(0, 25)
     .map((li) => ({
-      title: li.title ?? "",
+      title: (li.title ?? "").trim(),
       quantity: li.quantity ?? 1,
       price: li.price ?? null,
     }));
@@ -159,13 +182,18 @@ export async function processOrderWebhook(
   const supabase = createAdminClient();
   const orderId = payload.id != null ? String(payload.id) : null;
 
-  let match: { id: string; reminder_1_sent_at: string | null } | null = null;
+  type Match = {
+    id: string;
+    reminder_1_delivery: string | null;
+    reminder_2_delivery: string | null;
+  } | null;
+  let match: Match = null;
 
   const token = payload.checkout_token?.trim();
   if (token) {
     const { data } = await supabase
       .from("abandoned_checkouts")
-      .select("id, reminder_1_sent_at")
+      .select("id, reminder_1_delivery, reminder_2_delivery")
       .eq("tenant_id", tenant.id)
       .eq("checkout_token", token)
       .in("status", ACTIVE_STATUSES as unknown as string[])
@@ -179,7 +207,7 @@ export async function processOrderWebhook(
     const since = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
     const { data } = await supabase
       .from("abandoned_checkouts")
-      .select("id, reminder_1_sent_at")
+      .select("id, reminder_1_delivery, reminder_2_delivery")
       .eq("tenant_id", tenant.id)
       .eq("phone", phone)
       .in("status", ACTIVE_STATUSES as unknown as string[])
@@ -194,7 +222,8 @@ export async function processOrderWebhook(
   await supabase
     .from("abandoned_checkouts")
     .update({
-      status: match.reminder_1_sent_at ? "recovered" : "cancelled",
+      // recovered SOLO con recordatorio salido y sin fallo constatado.
+      status: reminderDelivered(match) ? "recovered" : "cancelled",
       recovered_shopify_order_id: orderId,
       recovered_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

@@ -6,12 +6,14 @@
 //   1. Ventana horaria 8:00–20:00 America/Bogota (fuera de ella el barrido
 //      entero es no-op; lo vencido sale en la siguiente corrida en ventana).
 //   2. Tenant activo + módulo encendido + checkout_url_base configurada.
-//   3. Máx 1 recordatorio de carrito por comprador por día; con varios
-//      checkouts vencidos del mismo comprador gana el más reciente y los
-//      demás pasan a expired.
+//   3. Máx 1 recordatorio de carrito por comprador por día (día Bogotá); con
+//      varios checkouts vencidos del mismo comprador gana el más reciente y
+//      los demás expiran SOLO si el ganador realmente sale (si se posterga,
+//      vuelven a competir en la siguiente corrida).
 //   4. Comprador sin marketing_opt_out.
 //   5. No molestar a quien ya está hablando: conversación escalada
-//      (requires_human/human_active) o con sesión abierta (<24h) → se posterga.
+//      (requires_human/human_active) o con el cliente escribiendo hace <4h →
+//      se posterga.
 //   6. Doble verificación de compra: si el bot ya le creó una orden después
 //      del abandono, el checkout se cierra sin enviar.
 //   7. El botón debe reconstruir un link válido: la URL del checkout empieza
@@ -32,11 +34,13 @@ import { getTenantByPhoneNumberId, type Tenant } from "../tenant";
 import { sendTemplate, type WaCreds } from "../whatsapp/meta";
 import { logEvent } from "../ops/events";
 import { formatCop } from "../billing";
-import { bogotaDayStart } from "../dates";
+import { bogotaDayIso, bogotaDayStart } from "../dates";
 import { cartSettings, CART_TEMPLATE_UNIT_COST_USD, type CartSettings } from "./settings";
+import { reminderDelivered } from "./delivery";
 
 const SEND_WINDOW = { from: 8, to: 20 } as const; // [8:00, 20:00) Bogotá
 const MIN_GAP_BETWEEN_REMINDERS_MS = 2 * 3_600_000; // anti-solape del cron
+const ACTIVE_CHAT_COOLDOWN_MS = 4 * 3_600_000; // cliente escribiendo → posterga
 const MAX_PER_TENANT = 200;
 
 type CheckoutRow = {
@@ -50,6 +54,8 @@ type CheckoutRow = {
   created_at: string;
   last_activity_at: string;
   reminder_1_sent_at: string | null;
+  reminder_1_delivery: string;
+  reminder_2_delivery: string;
   send_attempts: number;
 };
 
@@ -76,10 +82,18 @@ export function buttonSuffix(url: string, base: string): string | null {
 }
 
 // "Zapatos de tacón rojo talla…" (+ " y 2 más" si el carrito trae más ítems).
-function describeItems(items: CheckoutRow["line_items"]): string {
-  const first = (items?.[0]?.title ?? "tu pedido").slice(0, 60).trim();
+// Shopify a veces manda title "" (ítems custom/draft): `||` en vez de `??`
+// para que el vacío también caiga al fallback — un parámetro vacío rompe el
+// envío de la plantilla en Meta.
+export function describeItems(items: CheckoutRow["line_items"]): string {
+  const first = (items?.[0]?.title || "tu pedido").slice(0, 60).trim() || "tu pedido";
   const rest = (items?.length ?? 0) - 1;
   return rest > 0 ? `${first} y ${rest} más` : first;
+}
+
+// Meta rechaza parámetros de plantilla vacíos o con saltos de línea/tabs.
+function cleanParam(s: string): string {
+  return s.replace(/\s+/g, " ").trim() || "-";
 }
 
 async function getOrCreateConversation(
@@ -136,15 +150,32 @@ async function processCheckout(params: {
     return "skipped";
   }
 
-  // 4) Opt-out del comprador.
+  // 4) Opt-out del comprador + número sin WhatsApp (error 131026 previo:
+  // jamás reintentar marketing ahí).
   const { data: customer } = await supabase
     .from("customers")
-    .select("marketing_opt_out")
+    .select("marketing_opt_out, wa_undeliverable_at")
     .eq("tenant_id", tenant.id)
     .eq("phone", row.phone)
     .maybeSingle();
   if (customer?.marketing_opt_out) {
     await terminal("opted_out");
+    return "expired";
+  }
+  if (customer?.wa_undeliverable_at) {
+    await terminal("expired");
+    return "expired";
+  }
+
+  // 4b) Número bloqueado por el tenant (/dashboard/blocklist): sin marketing.
+  const { data: blocked } = await supabase
+    .from("blocked_numbers")
+    .select("id")
+    .eq("tenant_id", tenant.id)
+    .eq("phone", row.phone)
+    .maybeSingle();
+  if (blocked) {
+    await terminal("expired");
     return "expired";
   }
 
@@ -161,9 +192,9 @@ async function processCheckout(params: {
     }
     if (
       conv.last_customer_message_at &&
-      Date.now() - new Date(conv.last_customer_message_at).getTime() < 24 * 3_600_000
+      Date.now() - new Date(conv.last_customer_message_at).getTime() < ACTIVE_CHAT_COOLDOWN_MS
     ) {
-      return "skipped"; // sesión abierta con el asesor; se posterga
+      return "skipped"; // el cliente está escribiendo hace poco; se posterga
     }
     const { data: order } = await supabase
       .from("orders")
@@ -173,7 +204,10 @@ async function processCheckout(params: {
       .limit(1)
       .maybeSingle();
     if (order) {
-      await terminal(row.reminder_1_sent_at ? "recovered" : "cancelled", {
+      // Atribución honesta: recovered SOLO si algún recordatorio salió y no
+      // consta su fallo (reminderDelivered); si Meta nunca entregó, el
+      // comprador compró solo → cancelled.
+      await terminal(reminderDelivered(row) ? "recovered" : "cancelled", {
         recovered_shopify_order_id: order.shopify_order_id ?? null,
         recovered_at: new Date().toISOString(),
       });
@@ -182,10 +216,13 @@ async function processCheckout(params: {
   }
 
   // 7) El botón debe reconstruir un link válido sobre la base fija de la
-  // plantilla (sufijo directo o token del checkout — ver buttonSuffix).
+  // plantilla. En modo "redirect" el sufijo es el id del checkout (la
+  // plantilla v2 apunta a APP_BASE_URL/r/c/ y el redirect resuelve la URL
+  // real de recuperación, prellenada); en modo "token", sufijo directo o
+  // token del checkout — ver buttonSuffix.
   const base = settings.checkout_url_base;
   const url = row.abandoned_checkout_url ?? "";
-  const urlSuffix = buttonSuffix(url, base);
+  const urlSuffix = settings.link_mode === "redirect" ? row.id : buttonSuffix(url, base);
   if (!urlSuffix) {
     await terminal("expired");
     await logEvent({
@@ -201,10 +238,11 @@ async function processCheckout(params: {
   const firstName = row.customer_name?.trim().split(/\s+/)[0] || "de nuevo";
   const productDesc = describeItems(row.line_items);
   const templateName = phase === 1 ? settings.template_1 : settings.template_2;
-  const bodyParams =
+  const bodyParams = (
     phase === 1
       ? [firstName, productDesc]
-      : [firstName, productDesc, formatCop(row.total_price ?? 0)];
+      : [firstName, productDesc, formatCop(row.total_price ?? 0)]
+  ).map(cleanParam);
 
   // 8) Envío. Fallo → 1 reintento en la corrida siguiente, luego expired.
   let waMessageId: string | null = null;
@@ -247,6 +285,10 @@ async function processCheckout(params: {
     .update({
       status: phase === 1 ? "reminded_1" : "reminded_2",
       [phase === 1 ? "reminder_1_sent_at" : "reminder_2_sent_at"]: new Date().toISOString(),
+      // "accepted" = Meta devolvió wamid; la entrega real llega después por el
+      // webhook de statuses (delivered/failed) y se correlaciona por el wamid.
+      [phase === 1 ? "reminder_1_wamid" : "reminder_2_wamid"]: waMessageId,
+      [phase === 1 ? "reminder_1_delivery" : "reminder_2_delivery"]: "accepted",
       send_attempts: 0,
       updated_at: new Date().toISOString(),
     })
@@ -285,6 +327,7 @@ async function processCheckout(params: {
       phone: row.phone,
       reminder_number: phase,
       unit_cost_usd: CART_TEMPLATE_UNIT_COST_USD,
+      wa_message_id: waMessageId, // cruzable con wa_delivery_failure
     },
   });
   return "sent";
@@ -336,26 +379,29 @@ export async function runCartReminderSweep(): Promise<{
     const [d1, d2] = settings.delays_minutes;
     const due1 = new Date(now.getTime() - d1 * 60_000).toISOString();
     const due2 = new Date(now.getTime() - d2 * 60_000).toISOString();
+    // El recordatorio 1 cuenta desde la última actividad; el 2 desde el ENVÍO
+    // del 1 (last_activity_at no sirve: cada checkouts/update de Shopify lo
+    // reprograma y postergaba el 2 indefinidamente).
     const { data: rows } = await supabase
       .from("abandoned_checkouts")
       .select(
-        "id, phone, customer_name, line_items, total_price, abandoned_checkout_url, status, created_at, last_activity_at, reminder_1_sent_at, send_attempts"
+        "id, phone, customer_name, line_items, total_price, abandoned_checkout_url, status, created_at, last_activity_at, reminder_1_sent_at, reminder_1_delivery, reminder_2_delivery, send_attempts"
       )
       .eq("tenant_id", t.id)
       .or(
-        `and(status.eq.pending,last_activity_at.lte.${due1}),and(status.eq.reminded_1,last_activity_at.lte.${due2})`
+        `and(status.eq.pending,last_activity_at.lte.${due1}),and(status.eq.reminded_1,reminder_1_sent_at.lte.${due2})`
       )
+      // Reintento programado por fallo de entrega (131049): antes de la hora
+      // no compite. Los .or() encadenados se AND-ean.
+      .or(`next_retry_at.is.null,next_retry_at.lte.${now.toISOString()}`)
       .order("last_activity_at", { ascending: false })
       .limit(MAX_PER_TENANT);
     const candidates = (rows ?? []) as CheckoutRow[];
     if (candidates.length === 0) continue;
 
-    // Compradores que YA recibieron un recordatorio de carrito hoy (día Bogotá).
-    const today = new Date();
-    const dayIso = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}-${String(
-      today.getUTCDate()
-    ).padStart(2, "0")}`;
-    const dayStart = bogotaDayStart(dayIso)!;
+    // Compradores que YA recibieron un recordatorio de carrito hoy (día Bogotá;
+    // con el día UTC la regla se apagaba entre las 19:00 y 20:00 de Bogotá).
+    const dayStart = bogotaDayStart(bogotaDayIso(now))!;
     const { data: sentRows } = await supabase
       .from("abandoned_checkouts")
       .select("phone")
@@ -364,20 +410,18 @@ export async function runCartReminderSweep(): Promise<{
     const sentTodayPhones = new Set((sentRows ?? []).map((r) => r.phone));
 
     // Con varios checkouts vencidos del mismo comprador gana el MÁS reciente
-    // (la lista viene ordenada desc); los demás expiran: su carrito quedó
-    // reemplazado por el nuevo.
+    // (la lista viene ordenada desc). Los demás expiran SOLO si el ganador
+    // realmente sale ("sent"): si se posterga o falla, quedan intactos y
+    // vuelven a competir en la siguiente corrida.
     const winners: CheckoutRow[] = [];
-    const seenPhones = new Set<string>();
+    const losersByPhone = new Map<string, CheckoutRow[]>();
     for (const row of candidates) {
-      if (seenPhones.has(row.phone)) {
-        await supabase
-          .from("abandoned_checkouts")
-          .update({ status: "expired", updated_at: new Date().toISOString() })
-          .eq("id", row.id);
-        expired++;
+      const losers = losersByPhone.get(row.phone);
+      if (losers) {
+        losers.push(row);
         continue;
       }
-      seenPhones.add(row.phone);
+      losersByPhone.set(row.phone, []);
       winners.push(row);
     }
 
@@ -393,6 +437,15 @@ export async function runCartReminderSweep(): Promise<{
         if (result === "sent") sent++;
         else if (result === "expired") expired++;
         else skipped++;
+        if (result === "sent") {
+          for (const loser of losersByPhone.get(row.phone) ?? []) {
+            await supabase
+              .from("abandoned_checkouts")
+              .update({ status: "expired", updated_at: new Date().toISOString() })
+              .eq("id", loser.id);
+            expired++;
+          }
+        }
       } catch (e) {
         skipped++;
         await logEvent({

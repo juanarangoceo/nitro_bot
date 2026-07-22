@@ -981,7 +981,103 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     MB/mes por tenant activo; videos entrantes = la mitad con 5 archivos).
     Sin riesgo de cuota; retención de media = opción futura en el cron.
 
+- **Sesión 2026-07-22 — Tickets (avisos + reasignar), Blocklist y
+  entregabilidad de carritos (rama `feature/tickets-blocklist-carts`,
+  migraciones #34-#36 APLICADAS; typecheck/build/verify 4/4 + 56 checks
+  desechables; NO desplegado al escribir esto)**:
+  - **Carritos — 6 bugs de entregabilidad (migración #34)**: (1)
+    `describeItems` usaba `??` y el `title: ""` que manda Shopify en ítems
+    custom pasaba sin fallback → **parámetro VACÍO a Meta** (rechazo o
+    plantilla con hueco); ahora `||` + `cleanParam` sanea todos los
+    bodyParams. (2) La regla «1 recordatorio por comprador/día» calculaba el
+    día con `getUTC*`: **entre 19:00 y 20:00 Bogotá se apagaba** (el día UTC
+    ya era el siguiente y el filtro miraba al futuro) → `bogotaDayIso` en
+    lib/dates.ts. (3) El dedup por teléfono expiraba a los checkouts
+    "perdedores" ANTES de saber si el ganador salía; ahora solo tras `"sent"`.
+    (4) El reloj del recordatorio 2 corría desde `last_activity_at`, que
+    **cada `checkouts/update` de Shopify reprograma** → lo posponía
+    indefinidamente; ahora cuenta desde `reminder_1_sent_at` (índice parcial
+    nuevo). (5) No-molestar por sesión abierta 24h → 4h (el skip por
+    `requires_human/human_active` queda igual). (6) Checkouts sin teléfono
+    dejan traza (`cart_reminder`/`no_phone`, solo en la creación).
+    Migración #34: `reminder_N_wamid`, `reminder_N_delivery`
+    (none/accepted/delivered/failed), `reminder_N_delivered_at`,
+    `next_retry_at`, `delivery_retries`, `clicked_at`/`click_count` y
+    `customers.wa_undeliverable_at`. `wa_template_usage` incluye el
+    `wa_message_id` → la facturación por fin cruza con los fallos.
+  - **Carritos — checkout PRELLENADO (`link_mode`)**: el botón usaba
+    `cn/{token}` = sesión nueva **con productos pero SIN los datos del
+    cliente**. La URL que sí prellena (`ac/{token}/recover?key=…`) ya se
+    guardaba en `abandoned_checkouts.abandoned_checkout_url`. Ruta pública
+    nueva **`app/r/c/[id]`** (302 a esa URL, fallback `base+token`, uuid no
+    adivinable, jamás 500, `/r/*` fuera del proxy) que además **mide CLICKS**
+    (primer dato de conversión del módulo). `cart_settings.link_mode`
+    (`"token"` default = deploy inerte | `"redirect"`) con selector en
+    /admin. **Requiere plantillas v2 aprobadas en Meta** con base
+    `https://nitro-bot-coral.vercel.app/r/c/` antes de activar.
+  - **Carritos — entrega real (`lib/carts/delivery.ts`)**: los `failed` de
+    Meta solo se logueaban; nadie los procesaba. Ahora `extractTrackedStatuses`
+    (delivered + failed) → `processCartDeliveryStatus` correlaciona por wamid
+    y actúa por código: **delivered** marca entrega (guard: nunca pisa un
+    failed); **131049** (frecuencia de marketing) revierte UNA vez con
+    reintento a 48h — **la única reversión de estado permitida** en la
+    máquina, solo service_role y con tope `delivery_retries`; **131050** →
+    opted_out + `marketing_opt_out`; **131026** → expired +
+    `wa_undeliverable_at`. **Atribución honesta**: `recovered` exige
+    recordatorio salido SIN fallo constatado (`reminderDelivered`) en los 3
+    puntos de cierre — antes se contaba como venta recuperada un recordatorio
+    que Meta descartó. Panel del cliente con el embudo
+    enviado→entregado→click→recuperado; `/admin/health` con «Entrega de
+    plantillas (7 días)» por cliente; alerta Telegram en el cron diario de
+    billing (>15% de fallo con ≥10 envíos del día Bogotá **cerrado**: los
+    failed llegan async tras el barrido).
+  - **Tickets — avisos in-app (migración #35)**: el worker guardaba el mensaje
+    del cliente escalado pero **no tocaba `tickets`**, así que nadie se
+    enteraba sin abrir chat por chat. `tickets.last_customer_message_at` +
+    `has_unread` (default true = un escalado nace sin leer; los existentes se
+    apagaron en la migración); el worker los marca en el gate de estado
+    (post-debounce) y **el Realtime de tickets ya existente** reordena la
+    lista y enciende el badge sin canal nuevo. Lista ordenada por última
+    actividad, punto `--brand` + «Mensaje nuevo», abrir el ticket lo limpia
+    (`markTicketRead`). **Badge ámbar con contador en el sidebar**
+    (`tickets-badge.tsx`, suscripción propia porque el canal de la página
+    solo vive ahí; RLS filtra el count por rol).
+  - **Tickets — reasignar a otro agente**: selector «Todo el equipo / …»
+    junto a Resolver, con confirmación. OJO: `reassignTicket` valida
+    visibilidad y destinatario por RLS pero **escribe con service_role**
+    acotado a `(id, tenant)` — con el cliente authenticated, Postgres
+    rechaza **42501** el UPDATE que saca la fila de la visibilidad de quien
+    reasigna (el WITH CHECK de 0024 pasa, pero el SELECT de 0030 ya no), que
+    es justo lo que pasa al pasarle el ticket a un compañero.
+  - **Blocklist (migración #36)**: `blocked_numbers` (unique `(tenant_id,
+    phone)` = índice del lookup), RLS patrón 0021 (todo el equipo lee, solo
+    el **admin del tenant** escribe; REVOKE + grants por columna). El gate
+    del worker va **antes de todo** (ni `markAsRead` —los checks azules
+    delatarían el procesamiento—, ni conversación, ni CRM, ni mensaje, ni
+    contador) y **gana sobre `test_phones`**. Cubre también recordatorios de
+    silencio (Set por tenant), plantillas de carrito y la INGESTA de
+    checkouts. Módulo `/dashboard/blocklist` («Bloqueados», solo admin,
+    opt-out `modules.blocklist`) con `normalizeCoPhone` (misma normalización
+    del canal) + botón «Bloquear número» en el detalle de Conversaciones.
+
 ### 🔜 Pendiente
+- **Desplegar la rama `feature/tickets-blocklist-carts` (2026-07-22)**: las
+  migraciones #34-#36 YA están aplicadas en la DB viva (todas aditivas, el
+  código actual las ignora), así que el merge a main es el único paso que
+  falta. Post-deploy: (1) mandar un mensaje desde el número de prueba a una
+  conversación escalada → badge del sidebar sube en vivo y la lista se
+  reordena; (2) reasignar un ticket real a otro agente y confirmar que
+  desaparece de la bandeja de los demás; (3) bloquear un número de prueba →
+  escribir desde él → CERO filas nuevas en `messages`/`conversations`;
+  (4) revisar el panel de Carritos con la columna «Entrega» tras un par de
+  días de tráfico real.
+- **Plantillas v2 de Meta para el checkout prellenado (2026-07-22)**: crear
+  y hacer aprobar `carrito_recordatorio_1_v2`/`_2_v2` (mismos cuerpos, botón
+  URL base `https://nitro-bot-coral.vercel.app/r/c/`, Marketing, es_CO).
+  Aprobadas → en /admin poner los nombres nuevos y cambiar «Link del botón»
+  a «Redirect prellenado». Probar el botón en Android **y** iPhone antes de
+  dejarlo: debe abrir el checkout con productos Y datos del cliente y poblar
+  `clicked_at`. Rollback = volver el selector a «Token».
 - **Post-deploy videos (2026-07-21)**: (1) Juan re-prueba enviar el video MP4
   desde Tickets (ya con subida directa a Storage); (2) Elegance sube un video
   a un producto en su admin de Shopify → el webhook products/update lo

@@ -55,22 +55,32 @@ export default async function HealthPage({
   if (kindFilter) query = query.eq("kind", kindFilter);
   else query = query.in("severity", ["warning", "error"]);
 
-  const [{ data: events }, errors24h, { data: tenants }, { data: usageRows }] = await Promise.all([
-    query,
-    admin
-      .from("event_log")
-      .select("id", { count: "exact", head: true })
-      .eq("severity", "error")
-      .gte("created_at", since24h),
-    admin.from("tenants").select("id, name").order("name"),
-    admin
-      .from("event_log")
-      .select("conversation_id, detail, created_at")
-      .eq("kind", "gemini_usage")
-      .gte("created_at", since14d)
-      .order("created_at", { ascending: false })
-      .limit(5000),
-  ]);
+  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [{ data: events }, errors24h, { data: tenants }, { data: usageRows }, { data: cartRows }] =
+    await Promise.all([
+      query,
+      admin
+        .from("event_log")
+        .select("id", { count: "exact", head: true })
+        .eq("severity", "error")
+        .gte("created_at", since24h),
+      admin.from("tenants").select("id, name").order("name"),
+      admin
+        .from("event_log")
+        .select("conversation_id, detail, created_at")
+        .eq("kind", "gemini_usage")
+        .gte("created_at", since14d)
+        .order("created_at", { ascending: false })
+        .limit(5000),
+      admin
+        .from("abandoned_checkouts")
+        .select(
+          "tenant_id, reminder_1_sent_at, reminder_2_sent_at, reminder_1_delivery, reminder_2_delivery, clicked_at"
+        )
+        .or(`reminder_1_sent_at.gte.${since7d},reminder_2_sent_at.gte.${since7d}`)
+        .limit(5000),
+    ]);
 
   const tenantName = new Map((tenants ?? []).map((t) => [t.id, t.name]));
   const rows = events ?? [];
@@ -127,6 +137,26 @@ export default async function HealthPage({
   const usageDays = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
   const topConvs = [...byConv.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
   const fmt = (n: number) => n.toLocaleString("es-CO");
+
+  // —— Entrega de plantillas de carrito (7 días): agregado por tenant ——
+  type CartAgg = { sent: number; delivered: number; failed: number; clicks: number };
+  const cartByTenant = new Map<string, CartAgg>();
+  for (const r of cartRows ?? []) {
+    const agg =
+      cartByTenant.get(r.tenant_id) ?? { sent: 0, delivered: 0, failed: 0, clicks: 0 };
+    for (const [sentAt, delivery] of [
+      [r.reminder_1_sent_at, r.reminder_1_delivery],
+      [r.reminder_2_sent_at, r.reminder_2_delivery],
+    ] as const) {
+      if (!sentAt || sentAt < since7d) continue;
+      agg.sent++;
+      if (delivery === "delivered") agg.delivered++;
+      if (delivery === "failed") agg.failed++;
+    }
+    if (r.clicked_at) agg.clicks++;
+    cartByTenant.set(r.tenant_id, agg);
+  }
+  const cartTenants = [...cartByTenant.entries()].sort((a, b) => b[1].sent - a[1].sent);
 
   const filterHref = (p: { tenant?: string; kind?: string; page?: number }) => {
     const params = new URLSearchParams();
@@ -231,6 +261,53 @@ export default async function HealthPage({
           </div>
         )}
       </section>
+
+      {cartTenants.length > 0 && (
+        <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+          <h2 className="text-sm font-semibold text-neutral-900">
+            Entrega de plantillas de carrito (7 días)
+          </h2>
+          <p className="text-xs text-neutral-400">
+            Enviado = Meta aceptó (wamid); la entrega real llega por el webhook de
+            statuses. Tasa de fallo &gt;15% dispara alerta Telegram (cron diario).
+          </p>
+          <table className="mt-3 w-full text-xs">
+            <thead>
+              <tr className="text-left uppercase tracking-wide text-neutral-400">
+                <th className="px-2 py-1.5 font-medium">Cliente</th>
+                <th className="px-2 py-1.5 text-right font-medium">Enviados</th>
+                <th className="px-2 py-1.5 text-right font-medium">Entregados</th>
+                <th className="px-2 py-1.5 text-right font-medium">Fallidos</th>
+                <th className="px-2 py-1.5 text-right font-medium">Clicks</th>
+                <th className="px-2 py-1.5 text-right font-medium">% fallo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cartTenants.map(([tid, a]) => {
+                const rate = a.sent > 0 ? Math.round((a.failed / a.sent) * 100) : 0;
+                return (
+                  <tr key={tid} className="border-t border-neutral-100">
+                    <td className="px-2 py-1.5 text-neutral-700">
+                      {tenantName.get(tid) ?? tid.slice(0, 8)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right text-neutral-700">{a.sent}</td>
+                    <td className="px-2 py-1.5 text-right text-emerald-700">{a.delivered}</td>
+                    <td className="px-2 py-1.5 text-right text-red-600">{a.failed}</td>
+                    <td className="px-2 py-1.5 text-right text-neutral-700">{a.clicks}</td>
+                    <td
+                      className={`px-2 py-1.5 text-right font-medium ${
+                        rate > 15 ? "text-red-600" : "text-neutral-500"
+                      }`}
+                    >
+                      {rate}%
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <form method="get" action="/admin/health" className="flex flex-wrap items-center gap-2">

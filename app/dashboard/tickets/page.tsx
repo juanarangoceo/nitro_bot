@@ -21,7 +21,7 @@ export default async function TicketsPage() {
   let query = supabase
     .from("tickets")
     .select(
-      "id, reason, created_at, conversation_id, label_id, assigned_to, ticket_labels(name), conversations(customer_phone, status)"
+      "id, reason, created_at, conversation_id, label_id, assigned_to, last_customer_message_at, has_unread, ticket_labels(name), conversations(customer_phone, status)"
     )
     .eq("status", "open")
     .order("created_at", { ascending: false });
@@ -46,20 +46,32 @@ export default async function TicketsPage() {
   }
 
   // Supabase devuelve la relación embebida; la normalizamos a objeto plano.
-  const tickets: TicketRow[] = (data ?? []).map((t) => {
-    const conv = Array.isArray(t.conversations) ? t.conversations[0] : t.conversations;
-    const label = Array.isArray(t.ticket_labels) ? t.ticket_labels[0] : t.ticket_labels;
-    return {
-      id: t.id,
-      reason: t.reason,
-      created_at: t.created_at,
-      conversation_id: t.conversation_id,
-      customer_phone: conv?.customer_phone ?? "—",
-      status: conv?.status ?? "—",
-      label_name: label?.name ?? null,
-      assigned_name: (t.assigned_to && team[t.assigned_to]) || null,
-    };
-  });
+  // Orden por ÚLTIMA ACTIVIDAD del cliente (fallback: apertura del ticket) —
+  // el que reescribió sube arriba. Se ordena en JS: Supabase no ordena por
+  // greatest(a, b).
+  const tickets: TicketRow[] = (data ?? [])
+    .map((t) => {
+      const conv = Array.isArray(t.conversations) ? t.conversations[0] : t.conversations;
+      const label = Array.isArray(t.ticket_labels) ? t.ticket_labels[0] : t.ticket_labels;
+      return {
+        id: t.id,
+        reason: t.reason,
+        created_at: t.created_at,
+        conversation_id: t.conversation_id,
+        customer_phone: conv?.customer_phone ?? "—",
+        status: conv?.status ?? "—",
+        label_name: label?.name ?? null,
+        assigned_to: t.assigned_to ?? null,
+        assigned_name: (t.assigned_to && team[t.assigned_to]) || null,
+        last_customer_message_at: t.last_customer_message_at ?? null,
+        has_unread: t.has_unread ?? false,
+      };
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.last_customer_message_at ?? b.created_at).getTime() -
+        new Date(a.last_customer_message_at ?? a.created_at).getTime()
+    );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">

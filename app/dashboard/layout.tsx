@@ -34,6 +34,9 @@ export default async function DashboardLayout({
     ...(isAdmin && mod.labels !== false
       ? [{ href: "/dashboard/labels", label: "Etiquetas" }]
       : []),
+    ...(isAdmin && mod.blocklist !== false
+      ? [{ href: "/dashboard/blocklist", label: "Bloqueados" }]
+      : []),
     ...(isAdmin && mod.plan !== false ? [{ href: "/dashboard/plan", label: "Plan" }] : []),
     { href: "/dashboard/account", label: "Mi cuenta" },
   ];

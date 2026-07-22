@@ -958,6 +958,7 @@ export async function updateCartSettings(fd: FormData): Promise<void> {
   const t1 = String(fd.get("cart_template_1") ?? "").trim();
   const t2 = String(fd.get("cart_template_2") ?? "").trim();
   const lang = String(fd.get("cart_template_language") ?? "").trim();
+  const linkMode = String(fd.get("cart_link_mode") ?? "") === "redirect" ? "redirect" : "token";
 
   // La base del botón debe ser https y terminar como prefijo real de URL.
   if (urlBase && !/^https:\/\/[^\s]+$/.test(urlBase)) return;
@@ -970,6 +971,7 @@ export async function updateCartSettings(fd: FormData): Promise<void> {
     template_2: t2 || "carrito_recordatorio_2",
     template_language: lang || "es_CO",
     checkout_url_base: urlBase,
+    link_mode: linkMode,
   };
   await admin
     .from("tenants")

@@ -257,6 +257,18 @@ export async function processInboundMessage(params: {
   const phone = toE164(message.from);
   const contactName = value.contacts?.[0]?.profile?.name ?? null;
 
+  // Número bloqueado por el tenant (/dashboard/blocklist): silencio TOTAL.
+  // Ni markAsRead (los checks azules delatarían que se procesó), ni
+  // conversación, ni CRM, ni mensaje persistido, ni contador. Va antes que
+  // todo — incluso que test_phones. 1 select contra el unique (tenant, phone).
+  const { data: blocked } = await supabase
+    .from("blocked_numbers")
+    .select("id")
+    .eq("tenant_id", tenant.id)
+    .eq("phone", phone)
+    .maybeSingle();
+  if (blocked) return;
+
   // ¿Número de prueba del tenant? Su conversación se marca is_test: no
   // descuenta del contador y el dashboard la muestra como «Prueba». Si el
   // número sale de la lista en /admin, la conversación vuelve a ser normal.
@@ -419,6 +431,17 @@ export async function processInboundMessage(params: {
     .eq("id", conversationId)
     .maybeSingle();
   if (fresh?.status !== "bot_active") {
+    // Conversación escalada: el bot calla, pero el equipo debe ENTERARSE de
+    // que el cliente reescribió — se marca el ticket abierto y el Realtime de
+    // tickets reordena la lista y enciende el badge del dashboard. Post-
+    // debounce: en una ráfaga solo la última invocación llega aquí.
+    if (fresh?.status === "requires_human" || fresh?.status === "human_active") {
+      await supabase
+        .from("tickets")
+        .update({ last_customer_message_at: new Date().toISOString(), has_unread: true })
+        .eq("conversation_id", conversationId)
+        .eq("status", "open");
+    }
     return; // un humano tiene la conversación, o está cerrada.
   }
 

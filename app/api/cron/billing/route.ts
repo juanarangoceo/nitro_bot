@@ -8,6 +8,7 @@ import {
   activateDueRenewals,
   sendOverduePaymentAlerts,
 } from "@/lib/billing-cycle";
+import { checkCartDeliveryAlerts } from "@/lib/carts/delivery";
 
 export async function GET(req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;
@@ -24,7 +25,10 @@ export async function GET(req: Request): Promise<Response> {
     // Recordatorio diario a Juan (Telegram) de cobros en riesgo: modo gracia
     // sin pago y adicionales vencidos — la pausa ahora es manual desde /admin.
     const alerts = await sendOverduePaymentAlerts();
-    return Response.json({ ok: true, invoiced, activated, alerts });
+    // Entregabilidad de carritos del día Bogotá anterior (los failed llegan
+    // async tras el barrido; aquí el día ya está cerrado): >15% → Telegram.
+    const cartAlerts = await checkCartDeliveryAlerts();
+    return Response.json({ ok: true, invoiced, activated, alerts, cartAlerts });
   } catch (e) {
     console.error("[cron billing] falló:", (e as Error).message);
     return Response.json({ ok: false, error: (e as Error).message }, { status: 500 });

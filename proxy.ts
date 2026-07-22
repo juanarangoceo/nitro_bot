@@ -56,8 +56,10 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Corre en todo menos APIs (webhooks/worker), estáticos e imágenes.
+  // Corre en todo menos APIs (webhooks/worker), el redirect público de
+  // carritos (/r/*: clicks de compradores, sin sesión — que no paguen el
+  // refresh de cookies), estáticos e imágenes.
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api|r/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

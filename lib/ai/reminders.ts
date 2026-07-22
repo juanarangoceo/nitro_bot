@@ -247,7 +247,18 @@ export async function runReminderSweep(): Promise<{ sent: number; skipped: numbe
       .lte("last_customer_message_at", until)
       .limit(200);
 
+    // Números bloqueados por el tenant: sin follow-ups (un select por tenant).
+    const { data: blockedRows } = await supabase
+      .from("blocked_numbers")
+      .select("phone")
+      .eq("tenant_id", t.id);
+    const blockedSet = new Set((blockedRows ?? []).map((r) => r.phone as string));
+
     for (const conv of (convs ?? []) as ConvRow[]) {
+      if (blockedSet.has(conv.customer_phone)) {
+        skipped++;
+        continue;
+      }
       try {
         const result = await processConversation(resolved.tenant, wa, conv);
         if (result === "sent") sent++;

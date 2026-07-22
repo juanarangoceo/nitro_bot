@@ -660,6 +660,22 @@ export default async function ClientDetailPage({
                     className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
                   />
                 </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-neutral-600">
+                    Link del botón (cambiar a «prellenado» SOLO con la plantilla
+                    v2 aprobada, cuya base es {"{app}"}/r/c/)
+                  </span>
+                  <select
+                    name="cart_link_mode"
+                    defaultValue={cs.link_mode}
+                    className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+                  >
+                    <option value="token">Token (cn/ — solo productos)</option>
+                    <option value="redirect">
+                      Redirect prellenado (r/c/ — productos + datos del cliente + clicks)
+                    </option>
+                  </select>
+                </label>
                 <div className="flex items-end">
                   <button
                     type="submit"

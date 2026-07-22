@@ -23,3 +23,10 @@ export function bogotaDayEnd(day: string): string | null {
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString();
 }
+
+// Instante → día del calendario en Bogotá ("2026-07-15"). Entre las 19:00 y
+// medianoche de Bogotá el día UTC ya es el siguiente; restar el offset antes
+// de recortar evita ese salto.
+export function bogotaDayIso(d: Date): string {
+  return new Date(d.getTime() - 5 * 3_600_000).toISOString().slice(0, 10);
+}
