@@ -159,6 +159,18 @@ async function processCheckout(params: {
     return "expired";
   }
 
+  // 4b) Número bloqueado por el tenant (/dashboard/blocklist): sin marketing.
+  const { data: blocked } = await supabase
+    .from("blocked_numbers")
+    .select("id")
+    .eq("tenant_id", tenant.id)
+    .eq("phone", row.phone)
+    .maybeSingle();
+  if (blocked) {
+    await terminal("expired");
+    return "expired";
+  }
+
   // 5) y 6) Estado de la conversación + orden ya creada por el bot.
   const { data: conv } = await supabase
     .from("conversations")

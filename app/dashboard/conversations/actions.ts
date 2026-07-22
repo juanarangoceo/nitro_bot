@@ -73,6 +73,36 @@ export async function sendToTickets(fd: FormData): Promise<void> {
   revalidatePath("/dashboard/tickets");
 }
 
+// Bloquear el número de esta conversación (solo admin; el spam se descubre
+// aquí). El teléfono se resuelve SERVER-SIDE desde la conversación (RLS) —
+// jamás del form. La escritura la valida RLS (0036: solo admin inserta). La
+// conversación y su historial quedan intactos: el número simplemente deja de
+// generar actividad; se desbloquea desde /dashboard/blocklist.
+export async function blockCustomerNumber(fd: FormData): Promise<void> {
+  const { tenant, supabase, role, user } = await getDashboardContext();
+  if (role !== "admin") return;
+  const conversationId = String(fd.get("conversation_id") ?? "");
+  if (!conversationId) return;
+
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("customer_phone")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (!conv?.customer_phone) return;
+
+  // Duplicado (23505) = ya estaba bloqueado; da igual.
+  await supabase.from("blocked_numbers").insert({
+    tenant_id: tenant.id,
+    phone: conv.customer_phone,
+    note: "Bloqueado desde Conversaciones",
+    created_by: user.id,
+  });
+
+  revalidatePath("/dashboard/conversations");
+  revalidatePath("/dashboard/blocklist");
+}
+
 // Eliminar una conversación definitivamente. El cascade de la FK borra sus
 // mensajes y tickets; las órdenes ya creadas se conservan (conversation_id
 // queda en null). RLS limita el borrado al propio tenant.

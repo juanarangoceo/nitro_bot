@@ -12,7 +12,7 @@ export default async function ConversationsPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
-  const { supabase } = await getDashboardContext();
+  const { supabase, role } = await getDashboardContext();
   const q = sanitizeSearch((await searchParams).q ?? "");
 
   // Conversaciones del tenant (RLS), las de actividad más reciente primero.
@@ -114,7 +114,11 @@ export default async function ConversationsPage({
         )}
       </form>
 
-      <ConversationsClient initialConversations={conversations} team={team} />
+      <ConversationsClient
+        initialConversations={conversations}
+        team={team}
+        isAdmin={role === "admin"}
+      />
     </div>
   );
 }

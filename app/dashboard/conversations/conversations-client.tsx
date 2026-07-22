@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { MessageBody } from "../message-body";
-import { closeConversation, deleteConversation, sendToTickets } from "./actions";
+import {
+  blockCustomerNumber,
+  closeConversation,
+  deleteConversation,
+  sendToTickets,
+} from "./actions";
 
 export type ConversationRow = {
   id: string;
@@ -42,10 +47,13 @@ function StatusBadge({ status }: { status: string }) {
 export function ConversationsClient({
   initialConversations,
   team,
+  isAdmin,
 }: {
   initialConversations: ConversationRow[];
   // id → nombre (o correo) del equipo, para "quién respondió" en cada burbuja.
   team: Record<string, string>;
+  // Solo el admin ve «Bloquear número» (RLS 0036 lo exige de todos modos).
+  isAdmin: boolean;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<ConversationRow | null>(
@@ -242,6 +250,28 @@ export function ConversationsClient({
                     className="rounded-lg bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-neutral-800"
                   >
                     Pasar a Tickets
+                  </button>
+                </form>
+              )}
+              {isAdmin && (
+                <form
+                  action={blockCustomerNumber}
+                  onSubmit={(e) => {
+                    if (
+                      !confirm(
+                        `¿Bloquear ${selected.customer_phone}? El asesor dejará de responderle por completo (tampoco recibirá recordatorios ni mensajes de carrito). El historial se conserva y puedes desbloquearlo desde «Bloqueados».`
+                      )
+                    ) {
+                      e.preventDefault();
+                    }
+                  }}
+                >
+                  <input type="hidden" name="conversation_id" value={selected.id} />
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
+                  >
+                    Bloquear número
                   </button>
                 </form>
               )}

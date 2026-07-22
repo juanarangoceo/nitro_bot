@@ -123,6 +123,15 @@ export async function processCheckoutWebhook(
     return;
   }
 
+  // Número bloqueado por el tenant: el checkout ni se persiste (silencio total).
+  const { data: blocked } = await supabase
+    .from("blocked_numbers")
+    .select("id")
+    .eq("tenant_id", tenant.id)
+    .eq("phone", phone)
+    .maybeSingle();
+  if (blocked) return;
+
   const lineItems = (payload.line_items ?? [])
     .slice(0, 25)
     .map((li) => ({

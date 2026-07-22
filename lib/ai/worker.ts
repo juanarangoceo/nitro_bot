@@ -257,6 +257,18 @@ export async function processInboundMessage(params: {
   const phone = toE164(message.from);
   const contactName = value.contacts?.[0]?.profile?.name ?? null;
 
+  // Número bloqueado por el tenant (/dashboard/blocklist): silencio TOTAL.
+  // Ni markAsRead (los checks azules delatarían que se procesó), ni
+  // conversación, ni CRM, ni mensaje persistido, ni contador. Va antes que
+  // todo — incluso que test_phones. 1 select contra el unique (tenant, phone).
+  const { data: blocked } = await supabase
+    .from("blocked_numbers")
+    .select("id")
+    .eq("tenant_id", tenant.id)
+    .eq("phone", phone)
+    .maybeSingle();
+  if (blocked) return;
+
   // ¿Número de prueba del tenant? Su conversación se marca is_test: no
   // descuenta del contador y el dashboard la muestra como «Prueba». Si el
   // número sale de la lista en /admin, la conversación vuelve a ser normal.
