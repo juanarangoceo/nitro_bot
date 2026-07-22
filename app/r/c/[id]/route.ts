@@ -10,15 +10,31 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { cartSettings } from "@/lib/carts/settings";
 import { logEvent } from "@/lib/ops/events";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+// El id se EXTRAE del segmento en vez de exigir que sea exactamente el uuid:
+// si la URL del botón de la plantilla quedó con el marcador de variable
+// escrito a mano, Meta lo deja como texto literal escapado y antepone basura
+// al id real (…/r/c/%7B%7B1%7D%7D<uuid>). Un carrito no puede perderse por un
+// prefijo espurio: el uuid sigue siendo lo único que identifica al checkout.
+function extractId(raw: string): string | null {
+  let s = raw;
+  try {
+    s = decodeURIComponent(raw);
+  } catch {
+    // secuencia % inválida: se busca sobre el original
+  }
+  return UUID_RE.exec(s)?.[0] ?? null;
+}
 
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    const { id } = await ctx.params;
-    if (!UUID_RE.test(id)) return new Response("No encontrado", { status: 404 });
+    const { id: raw } = await ctx.params;
+    const id = extractId(raw);
+    if (!id) return new Response("No encontrado", { status: 404 });
 
     const supabase = createAdminClient();
     const { data: row } = await supabase
