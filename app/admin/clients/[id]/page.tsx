@@ -608,7 +608,26 @@ export default async function ClientDetailPage({
                   </span>
                 )}
               </p>
-              <form action={updateCartSettings} className="grid gap-3 sm:grid-cols-2">
+              {/* Lo que el CRON está usando ahora mismo, leído de la DB: los
+                  campos de abajo son un formulario y pueden quedar con lo que
+                  el navegador tenga pintado. */}
+              <p className="mb-3 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+                Configuración vigente:{" "}
+                <span className="font-medium text-neutral-900">
+                  {cs.link_mode === "redirect"
+                    ? "Redirect prellenado (r/c/)"
+                    : "Token (cn/)"}
+                </span>{" "}
+                · plantillas {cs.template_1} / {cs.template_2} · {cs.template_language}
+              </p>
+              {/* key = valores guardados: fuerza a React a repintar los campos
+                  con lo que devuelve el servidor tras guardar (un <select> no
+                  controlado conserva su valor del DOM y mostraba el modo viejo). */}
+              <form
+                key={`${cs.link_mode}|${cs.template_1}|${cs.template_2}|${cs.template_language}|${cs.checkout_url_base}|${cs.delays_minutes.join(",")}`}
+                action={updateCartSettings}
+                className="grid gap-3 sm:grid-cols-2"
+              >
                 <input type="hidden" name="tenant_id" value={t.id} />
                 <label className="flex items-center gap-2 sm:col-span-2">
                   <input
