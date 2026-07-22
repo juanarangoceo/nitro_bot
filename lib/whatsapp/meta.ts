@@ -424,6 +424,10 @@ export type WaStatus = {
   status: "sent" | "delivered" | "read" | "failed" | string;
   timestamp?: string;
   recipient_id?: string; // teléfono destino (E.164 sin '+')
+  // Categoría de cobro del mensaje ("marketing", "service", "utility"…):
+  // permite filtrar barato los delivered de plantillas de marketing sin
+  // consultar la DB por cada mensaje normal del bot.
+  pricing?: { category?: string };
   errors?: { code?: number; title?: string; message?: string; error_data?: { details?: string } }[];
 };
 
@@ -458,9 +462,11 @@ export function extractInboundMessages(
   return out;
 }
 
-// Extrae los callbacks de estado FALLIDOS (entrega imposible: número sin
-// WhatsApp, límite de marketing de Meta, etc.). Los demás estados se ignoran.
-export function extractFailedStatuses(
+// Extrae los callbacks de estado que nos importan: failed (entrega imposible:
+// número sin WhatsApp, límite de marketing de Meta, etc.) y delivered (los
+// recordatorios de carrito confirman su entrega real por aquí). sent/read se
+// ignoran.
+export function extractTrackedStatuses(
   body: WaWebhookBody
 ): { value: WaValue; status: WaStatus }[] {
   const out: { value: WaValue; status: WaStatus }[] = [];
@@ -469,7 +475,9 @@ export function extractFailedStatuses(
       const value = change.value;
       if (!value?.statuses?.length) continue;
       for (const status of value.statuses) {
-        if (status.status === "failed") out.push({ value, status });
+        if (status.status === "failed" || status.status === "delivered") {
+          out.push({ value, status });
+        }
       }
     }
   }

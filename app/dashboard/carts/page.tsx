@@ -20,9 +20,26 @@ type CartRow = {
   status: string;
   reminder_1_sent_at: string | null;
   reminder_2_sent_at: string | null;
+  reminder_1_delivery: string;
+  reminder_2_delivery: string;
+  clicked_at: string | null;
   recovered_shopify_order_id: string | null;
   created_at: string;
 };
+
+// Entrega real del/los recordatorios (webhook de statuses de Meta): entregado
+// gana sobre fallido (llegó al menos uno); "accepted" = Meta lo aceptó y aún
+// no confirma.
+function deliveryBadge(r: CartRow): { label: string; className: string } | null {
+  const d = [r.reminder_1_delivery, r.reminder_2_delivery];
+  if (d.includes("delivered"))
+    return { label: "Entregado ✓", className: "bg-emerald-100 text-emerald-700" };
+  if (d.includes("accepted"))
+    return { label: "Enviado", className: "bg-sky-100 text-sky-700" };
+  if (d.includes("failed"))
+    return { label: "No entregado", className: "bg-red-100 text-red-700" };
+  return null;
+}
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("es-CO", {
@@ -58,7 +75,7 @@ export default async function CartsPage({
   let query = supabase
     .from("abandoned_checkouts")
     .select(
-      "id, phone, customer_name, line_items, total_price, status, reminder_1_sent_at, reminder_2_sent_at, recovered_shopify_order_id, created_at"
+      "id, phone, customer_name, line_items, total_price, status, reminder_1_sent_at, reminder_2_sent_at, reminder_1_delivery, reminder_2_delivery, clicked_at, recovered_shopify_order_id, created_at"
     )
     .gte("created_at", since)
     .order("created_at", { ascending: false })
@@ -72,6 +89,21 @@ export default async function CartsPage({
     (acc, r) => acc + (r.reminder_1_sent_at ? 1 : 0) + (r.reminder_2_sent_at ? 1 : 0),
     0
   );
+  const remindersDelivered = rows.reduce(
+    (acc, r) =>
+      acc +
+      (r.reminder_1_delivery === "delivered" ? 1 : 0) +
+      (r.reminder_2_delivery === "delivered" ? 1 : 0),
+    0
+  );
+  const remindersFailed = rows.reduce(
+    (acc, r) =>
+      acc +
+      (r.reminder_1_delivery === "failed" ? 1 : 0) +
+      (r.reminder_2_delivery === "failed" ? 1 : 0),
+    0
+  );
+  const clicks = rows.filter((r) => r.clicked_at).length;
   const recovered = rows.filter((r) => r.status === "recovered");
   const recoveredCop = recovered.reduce((acc, r) => acc + Number(r.total_price ?? 0), 0);
 
@@ -128,7 +160,7 @@ export default async function CartsPage({
         )}
       </form>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border border-neutral-200 bg-white p-5">
           <p className="text-xs uppercase tracking-wide text-neutral-400">
             Carritos detectados
@@ -143,6 +175,18 @@ export default async function CartsPage({
           </p>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-neutral-900">
             {remindersSent}
+          </p>
+          <p className="text-xs text-neutral-500">
+            {remindersDelivered} entregados
+            {remindersFailed > 0 ? ` · ${remindersFailed} no entregados` : ""}
+          </p>
+        </div>
+        <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+          <p className="text-xs uppercase tracking-wide text-neutral-400">
+            Clicks en el link
+          </p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-neutral-900">
+            {clicks}
           </p>
         </div>
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
@@ -179,6 +223,8 @@ export default async function CartsPage({
                   <th className="px-6 py-2 font-medium">Productos</th>
                   <th className="px-6 py-2 text-right font-medium">Total</th>
                   <th className="px-6 py-2 text-center font-medium">Recordatorios</th>
+                  <th className="px-6 py-2 font-medium">Entrega</th>
+                  <th className="px-6 py-2 font-medium">Click</th>
                   <th className="px-6 py-2 font-medium">Estado</th>
                 </tr>
               </thead>
@@ -210,6 +256,23 @@ export default async function CartsPage({
                       </td>
                       <td className="px-6 py-2.5 text-center tabular-nums text-neutral-500">
                         {sent}/2
+                      </td>
+                      <td className="px-6 py-2.5">
+                        {(() => {
+                          const d = deliveryBadge(r);
+                          return d ? (
+                            <span
+                              className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${d.className}`}
+                            >
+                              {d.label}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-neutral-400">—</span>
+                          );
+                        })()}
+                      </td>
+                      <td className="whitespace-nowrap px-6 py-2.5 text-xs text-neutral-500">
+                        {r.clicked_at ? fmtDate(r.clicked_at) : "—"}
                       </td>
                       <td className="px-6 py-2.5">
                         <span

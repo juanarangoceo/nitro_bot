@@ -36,6 +36,7 @@ import { logEvent } from "../ops/events";
 import { formatCop } from "../billing";
 import { bogotaDayIso, bogotaDayStart } from "../dates";
 import { cartSettings, CART_TEMPLATE_UNIT_COST_USD, type CartSettings } from "./settings";
+import { reminderDelivered } from "./delivery";
 
 const SEND_WINDOW = { from: 8, to: 20 } as const; // [8:00, 20:00) Bogotá
 const MIN_GAP_BETWEEN_REMINDERS_MS = 2 * 3_600_000; // anti-solape del cron
@@ -53,6 +54,8 @@ type CheckoutRow = {
   created_at: string;
   last_activity_at: string;
   reminder_1_sent_at: string | null;
+  reminder_1_delivery: string;
+  reminder_2_delivery: string;
   send_attempts: number;
 };
 
@@ -147,15 +150,20 @@ async function processCheckout(params: {
     return "skipped";
   }
 
-  // 4) Opt-out del comprador.
+  // 4) Opt-out del comprador + número sin WhatsApp (error 131026 previo:
+  // jamás reintentar marketing ahí).
   const { data: customer } = await supabase
     .from("customers")
-    .select("marketing_opt_out")
+    .select("marketing_opt_out, wa_undeliverable_at")
     .eq("tenant_id", tenant.id)
     .eq("phone", row.phone)
     .maybeSingle();
   if (customer?.marketing_opt_out) {
     await terminal("opted_out");
+    return "expired";
+  }
+  if (customer?.wa_undeliverable_at) {
+    await terminal("expired");
     return "expired";
   }
 
@@ -196,7 +204,10 @@ async function processCheckout(params: {
       .limit(1)
       .maybeSingle();
     if (order) {
-      await terminal(row.reminder_1_sent_at ? "recovered" : "cancelled", {
+      // Atribución honesta: recovered SOLO si algún recordatorio salió y no
+      // consta su fallo (reminderDelivered); si Meta nunca entregó, el
+      // comprador compró solo → cancelled.
+      await terminal(reminderDelivered(row) ? "recovered" : "cancelled", {
         recovered_shopify_order_id: order.shopify_order_id ?? null,
         recovered_at: new Date().toISOString(),
       });
@@ -374,12 +385,15 @@ export async function runCartReminderSweep(): Promise<{
     const { data: rows } = await supabase
       .from("abandoned_checkouts")
       .select(
-        "id, phone, customer_name, line_items, total_price, abandoned_checkout_url, status, created_at, last_activity_at, reminder_1_sent_at, send_attempts"
+        "id, phone, customer_name, line_items, total_price, abandoned_checkout_url, status, created_at, last_activity_at, reminder_1_sent_at, reminder_1_delivery, reminder_2_delivery, send_attempts"
       )
       .eq("tenant_id", t.id)
       .or(
         `and(status.eq.pending,last_activity_at.lte.${due1}),and(status.eq.reminded_1,reminder_1_sent_at.lte.${due2})`
       )
+      // Reintento programado por fallo de entrega (131049): antes de la hora
+      // no compite. Los .or() encadenados se AND-ean.
+      .or(`next_retry_at.is.null,next_retry_at.lte.${now.toISOString()}`)
       .order("last_activity_at", { ascending: false })
       .limit(MAX_PER_TENANT);
     const candidates = (rows ?? []) as CheckoutRow[];

@@ -15,11 +15,12 @@ import { enqueue } from "@/lib/queue";
 import { getTenantByPhoneNumberId } from "@/lib/tenant";
 import { processInboundMessage } from "@/lib/ai/worker";
 import {
-  extractFailedStatuses,
+  extractTrackedStatuses,
   extractInboundMessages,
   type WaWebhookBody,
 } from "@/lib/whatsapp/meta";
 import { logEvent } from "@/lib/ops/events";
+import { processCartDeliveryStatus } from "@/lib/carts/delivery";
 
 // El worker hace debounce (~8s) + llamadas a Gemini dentro de after(); damos
 // margen de ejecución a la invocación.
@@ -69,17 +70,20 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("bad json", { status: 400 });
   }
 
-  // Solo eventos de WhatsApp. Los statuses de entrega/lectura se ignoran,
-  // EXCEPTO los failed: la Cloud API acepta el envío (wamid) aunque el número
-  // no tenga WhatsApp o Meta decida no entregar (límite de marketing) — sin
-  // esto el fallo es invisible (caso real: recordatorio de carrito que "salió"
-  // pero nunca llegó, 2026-07-18).
+  // Solo eventos de WhatsApp. De los statuses se procesan failed y delivered:
+  // la Cloud API acepta el envío (wamid) aunque el número no tenga WhatsApp o
+  // Meta decida no entregar (límite de marketing) — sin esto el fallo es
+  // invisible (caso real: recordatorio de carrito que "salió" pero nunca
+  // llegó, 2026-07-18). processCartDeliveryStatus correlaciona el wamid con
+  // los recordatorios de carrito (entrega real, reintentos por código).
   const inbound = extractInboundMessages(body);
-  const failed = extractFailedStatuses(body);
+  const tracked = extractTrackedStatuses(body);
 
-  for (const { value, status } of failed) {
+  for (const { value, status } of tracked) {
     const phoneNumberId = value.metadata?.phone_number_id;
     enqueue(async () => {
+      const checkoutId = await processCartDeliveryStatus(status);
+      if (status.status !== "failed") return;
       const resolved = phoneNumberId ? await getTenantByPhoneNumberId(phoneNumberId) : null;
       await logEvent({
         kind: "wa_delivery_failure",
@@ -88,6 +92,7 @@ export async function POST(req: Request): Promise<Response> {
         detail: {
           wa_message_id: status.id,
           recipient: status.recipient_id ?? null,
+          checkout_id: checkoutId,
           errors: (status.errors ?? []).map((e) => ({
             code: e.code,
             title: e.title,
