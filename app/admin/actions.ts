@@ -13,7 +13,11 @@ import {
   type BusinessProfile,
 } from "@/lib/whatsapp/meta";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
-import { markInvoicePaid } from "@/lib/billing-cycle";
+import {
+  applyPlanChangeNow,
+  markInvoicePaid,
+  refreshBillingStatus,
+} from "@/lib/billing-cycle";
 import { uploadTenantLogo } from "@/lib/storage";
 import { env } from "@/lib/env";
 import { revalidatePath } from "next/cache";
@@ -179,16 +183,22 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
   // ciclo vigente; «próximo ciclo» queda en pending_plan y lo aplica el botón
   // «Marcar pagada» de la factura de renovación (lib/billing-cycle).
   const applyNextCycle = String(fd.get("plan_apply") ?? "now") === "next_cycle";
+  // `planNow` lo aplica applyPlanChangeNow DESPUÉS del update general: necesita
+  // leer el límite VIEJO para calcular el excedente de gracia que se descuenta.
+  const planNow: { plan?: string; monthly_fee?: number; message_limit?: number } | null =
+    !applyNextCycle && (plan || fee || limit)
+      ? {
+          ...(plan ? { plan } : {}),
+          ...(fee ? { monthly_fee: Number(fee) } : {}),
+          ...(limit ? { message_limit: Number(limit) } : {}),
+        }
+      : null;
   if (applyNextCycle && (plan || fee || limit)) {
     update.pending_plan = {
       ...(plan ? { plan } : {}),
       ...(fee ? { monthly_fee: Number(fee) } : {}),
       ...(limit ? { message_limit: Number(limit) } : {}),
     };
-  } else {
-    if (plan) update.plan = plan;
-    if (fee) update.monthly_fee = Number(fee);
-    if (limit) update.message_limit = Number(limit);
   }
   // El correo de notificaciones viene prellenado en el formulario, así que se
   // actualiza siempre que el campo esté presente: vaciarlo desactiva los avisos.
@@ -230,10 +240,25 @@ export async function updateTenantCommercial(fd: FormData): Promise<void> {
       .map((p) => (p.startsWith("+") ? p : `+57${p.replace(/^57/, "")}`));
     update.test_phones = [...new Set(phones)];
   }
-  if (Object.keys(update).length === 0) return;
+  if (Object.keys(update).length > 0) {
+    await admin.from("tenants").update(update).eq("id", tenantId);
+  }
+  // El plan «ahora» va aparte: si el cliente venía en gracia, cierra el ciclo
+  // viejo y arranca el nuevo con el excedente descontado (necesita el límite
+  // anterior, por eso corre después del update general).
+  const planResult = planNow ? await applyPlanChangeNow(tenantId, planNow) : null;
+  if (Object.keys(update).length === 0 && !planNow) return;
 
-  await admin.from("tenants").update(update).eq("id", tenantId);
-  await logAudit(admin, { adminId, action: "update_commercial", tenantId, detail: update });
+  await logAudit(admin, {
+    adminId,
+    action: "update_commercial",
+    tenantId,
+    detail: {
+      ...update,
+      ...(planNow ? { plan_now: planNow, cycle_restarted: planResult?.restarted ?? false, carry: planResult?.carry ?? 0 } : {}),
+    },
+  });
+  revalidatePath("/admin");
   revalidatePath(`/admin/clients/${tenantId}`);
 }
 
@@ -333,26 +358,38 @@ export async function createManualInvoice(fd: FormData): Promise<void> {
   revalidatePath(`/admin/clients/${tenantId}`);
 }
 
-// Solo facturas manuales y PENDIENTES (las automáticas y las pagadas son
-// historial contable y no se tocan).
-export async function deleteManualInvoice(fd: FormData): Promise<void> {
+// Elimina una factura PENDIENTE (de cualquier concepto: manual, renovación o
+// adicional). Las PAGADAS son historial contable y nunca se tocan. Sirve para
+// anular un cobro que quedó obsoleto — p. ej. la renovación del plan viejo
+// cuando el cliente pasa a un plan más grande a mitad de ciclo. Al borrarla se
+// recalcula el estado de pago: si no quedan pendientes del plan, vuelve a
+// «pagado». OJO: si se borra la renovación del ciclo vigente, el sistema puede
+// volver a generarla (80% de consumo o ≤10 días del corte) con el precio
+// VIGENTE — que es justo lo que se busca tras un cambio de plan.
+export async function deleteInvoice(fd: FormData): Promise<void> {
   const { admin, adminId } = await requirePlatformAdmin();
   const invoiceId = String(fd.get("invoice_id") ?? "");
   const tenantId = String(fd.get("tenant_id") ?? "");
   if (!invoiceId || !tenantId) return;
 
-  await admin
+  const { data: deleted } = await admin
     .from("invoices")
     .delete()
     .eq("id", invoiceId)
-    .eq("concept", "manual")
-    .eq("status", "pendiente");
+    .eq("tenant_id", tenantId)
+    .eq("status", "pendiente")
+    .select("concept, amount")
+    .maybeSingle();
+  if (!deleted) return; // pagada o inexistente: no se toca
+
+  await refreshBillingStatus(tenantId);
   await logAudit(admin, {
     adminId,
-    action: "invoice_manual_deleted",
+    action: "invoice_deleted",
     tenantId,
-    detail: { invoice_id: invoiceId },
+    detail: { invoice_id: invoiceId, concept: deleted.concept, amount: deleted.amount },
   });
+  revalidatePath("/admin");
   revalidatePath(`/admin/clients/${tenantId}`);
 }
 
