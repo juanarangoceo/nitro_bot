@@ -206,7 +206,7 @@ export async function generateUpcomingRenewals(): Promise<string[]> {
 // Recalcula billing_status: pagado solo si no queda ninguna factura pendiente
 // DEL PLAN (renovación/adicional). Las manuales (0029) son cobros aparte:
 // no cambian el estado del plan ni disparan el banner de factura vencida.
-async function refreshBillingStatus(tenantId: string): Promise<void> {
+export async function refreshBillingStatus(tenantId: string): Promise<void> {
   const admin = createAdminClient();
   const { count } = await admin
     .from("invoices")
@@ -268,6 +268,72 @@ async function activateNextCycle(tenantId: string): Promise<number | null> {
   }
   await refreshBillingStatus(tenantId);
   return carry;
+}
+
+// Cambio de plan aplicado «ahora» desde /admin. Escribe los campos del plan y,
+// SOLO si el cliente venía en modo gracia (consumido > total del ciclo), cierra
+// el ciclo viejo y arranca uno nuevo con el excedente descontado — la misma
+// fórmula del pago de renovación: lo ya facturado (plan + 2.000 si el adicional
+// estaba activo) se da por cubierto y solo cruza el sobrante. Ejemplo real:
+// 12.443 consumidos sobre 5.000 + 2.000 → el plan de 30.000 arranca en 5.443.
+// El adicional se apaga porque pertenecía al ciclo que cierra (se vuelve a
+// activar desde el checkbox cuando haga falta).
+//
+// Sin excedente NO se toca el contador: subir de plan a mitad de ciclo con
+// 3.000/5.000 consumidos deja 3.000/10.000, no lo reinicia.
+export async function applyPlanChangeNow(
+  tenantId: string,
+  next: { plan?: string; monthly_fee?: number; message_limit?: number }
+): Promise<{ restarted: boolean; carry: number } | null> {
+  const admin = createAdminClient();
+  const { data: tenant } = await admin
+    .from("tenants")
+    .select("id, name, current_month_messages, message_limit, addon_enabled, addon_price")
+    .eq("id", tenantId)
+    .maybeSingle();
+  if (!tenant) return null;
+
+  const addonOn = tenant.addon_enabled === true && tenant.addon_price != null;
+  const effective = tenant.message_limit + (addonOn ? ADDON_MESSAGES : 0);
+  const consumed = tenant.current_month_messages ?? 0;
+  // El reinicio solo tiene sentido si cambia el TAMAÑO del plan y hay
+  // excedente: un ajuste de precio o de nombre jamás mueve el contador.
+  const limitChanges =
+    Number.isFinite(next.message_limit) && next.message_limit !== tenant.message_limit;
+  const restarted = limitChanges && consumed > effective;
+  const carry = restarted ? consumed - effective : 0;
+
+  const update: Record<string, unknown> = { ...next };
+  if (restarted) {
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+    const due = new Date(`${today}T12:00:00Z`);
+    due.setUTCMonth(due.getUTCMonth() + 1);
+    update.current_month_messages = carry;
+    update.counter_period_start = new Date().toISOString();
+    update.billing_due_date = due.toISOString().slice(0, 10);
+    update.addon_enabled = false;
+    update.pending_plan = null; // el plan nuevo manda: un pendiente viejo confundiría
+  }
+
+  const { error } = await admin.from("tenants").update(update).eq("id", tenantId);
+  if (error) {
+    console.error("[billing] applyPlanChangeNow falló:", error.message);
+    return null;
+  }
+  await refreshBillingStatus(tenantId);
+
+  if (restarted) {
+    await sendTelegramAlert(
+      `🔵 <b>${escTelegram(tenant.name)}</b>: plan cambiado a ${Number(
+        next.message_limit
+      ).toLocaleString("es-CO")} mensajes. El ciclo nuevo arranca en ${carry.toLocaleString(
+        "es-CO"
+      )} (excedente de gracia descontado de los ${effective.toLocaleString(
+        "es-CO"
+      )} ya facturados).`
+    );
+  }
+  return { restarted, carry };
 }
 
 // Renovación PAGADA del ciclo vigente que aún no arrancó (el pago anticipado

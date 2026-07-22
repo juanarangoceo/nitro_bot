@@ -8,7 +8,7 @@ import {
   updateCartSettings,
   createManualInvoice,
 } from "../../actions";
-import { DeleteManualInvoiceButton, MarkPaidButton } from "./mark-paid-button";
+import { DeleteInvoiceButton, MarkPaidButton } from "./mark-paid-button";
 import { ServicePausedButton } from "./service-paused-button";
 import { ADDON_MESSAGES, billingInfo, formatCop, formatDueDate } from "@/lib/billing";
 import { cartSettings } from "@/lib/carts/settings";
@@ -218,6 +218,27 @@ export default async function ClientDetailPage({
                 <input type="radio" name="plan_apply" value="next_cycle" /> Al próximo ciclo
                 (al pagar la renovación)
               </label>
+              {(() => {
+                // Con «ahora» y el cliente en gracia, cambiar el TAMAÑO del plan
+                // cierra el ciclo viejo y arranca el nuevo con el excedente.
+                const addonOn = t.addon_enabled === true && t.addon_price != null;
+                const effective = (t.message_limit ?? 0) + (addonOn ? 2000 : 0);
+                const carry = (t.current_month_messages ?? 0) - effective;
+                if (carry <= 0) return null;
+                return (
+                  <p className="mt-2 text-xs text-neutral-600">
+                    Con «Ahora» y un límite distinto al actual, el ciclo se reinicia con el
+                    excedente de gracia:{" "}
+                    <span className="font-medium text-neutral-900">
+                      el contador arrancaría en {carry.toLocaleString("es-CO")}
+                    </span>{" "}
+                    (lleva {(t.current_month_messages ?? 0).toLocaleString("es-CO")} sobre{" "}
+                    {effective.toLocaleString("es-CO")} ya facturados), el corte pasa a hoy + 1
+                    mes y el paquete adicional queda desactivado. Si no cambias el límite, el
+                    contador no se toca.
+                  </p>
+                );
+              })()}
               {t.pending_plan && (
                 <p className="mt-2 text-xs font-medium text-amber-700">
                   Cambio programado:{" "}
@@ -499,9 +520,11 @@ export default async function ClientDetailPage({
                           tenantId={t.id}
                           concept={inv.concept}
                         />
-                        {inv.concept === "manual" && (
-                          <DeleteManualInvoiceButton invoiceId={inv.id} tenantId={t.id} />
-                        )}
+                        <DeleteInvoiceButton
+                          invoiceId={inv.id}
+                          tenantId={t.id}
+                          concept={inv.concept}
+                        />
                       </span>
                     )}
                   </li>
