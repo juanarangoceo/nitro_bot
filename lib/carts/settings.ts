@@ -14,6 +14,13 @@ export type CartSettings = {
   // completa; solo se envía como variable el sufijo restante. Si la URL no
   // empieza por esta base, NO se envía (un botón roto es peor que no enviar).
   checkout_url_base: string;
+  // "token": el sufijo del botón es el token del checkout sobre la base cn/
+  // (formato clásico — restaura productos pero NO los datos del cliente).
+  // "redirect": el sufijo es el id del checkout y la plantilla apunta al
+  // redirect propio APP_BASE_URL/r/c/{id}, que 302 a la URL REAL de
+  // recuperación de Shopify (ac/…/recover?key=…, checkout PRELLENADO) y de
+  // paso mide clicks. Requiere una plantilla cuya base sea el redirect.
+  link_mode: "token" | "redirect";
 };
 
 // Costo por plantilla de marketing (Colombia) para la telemetría de
@@ -26,6 +33,7 @@ const DEFAULTS: CartSettings = {
   template_2: "carrito_recordatorio_2",
   template_language: "es_CO",
   checkout_url_base: "", // vacío = módulo sin configurar: el cron no envía
+  link_mode: "token", // el deploy es inerte hasta cambiarlo en /admin
 };
 
 export function cartSettings(tenant: Pick<Tenant, "cart_settings">): CartSettings {
@@ -46,6 +54,7 @@ export function cartSettings(tenant: Pick<Tenant, "cart_settings">): CartSetting
         : DEFAULTS.template_language,
     checkout_url_base:
       typeof raw.checkout_url_base === "string" ? raw.checkout_url_base.trim() : DEFAULTS.checkout_url_base,
+    link_mode: raw.link_mode === "redirect" ? "redirect" : DEFAULTS.link_mode,
   };
 }
 

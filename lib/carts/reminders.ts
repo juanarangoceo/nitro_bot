@@ -205,10 +205,13 @@ async function processCheckout(params: {
   }
 
   // 7) El botón debe reconstruir un link válido sobre la base fija de la
-  // plantilla (sufijo directo o token del checkout — ver buttonSuffix).
+  // plantilla. En modo "redirect" el sufijo es el id del checkout (la
+  // plantilla v2 apunta a APP_BASE_URL/r/c/ y el redirect resuelve la URL
+  // real de recuperación, prellenada); en modo "token", sufijo directo o
+  // token del checkout — ver buttonSuffix.
   const base = settings.checkout_url_base;
   const url = row.abandoned_checkout_url ?? "";
-  const urlSuffix = buttonSuffix(url, base);
+  const urlSuffix = settings.link_mode === "redirect" ? row.id : buttonSuffix(url, base);
   if (!urlSuffix) {
     await terminal("expired");
     await logEvent({

@@ -26,7 +26,8 @@ export type EventKind =
   | "wa_template_usage"
   | "wa_delivery_failure"
   | "cart_reminder"
-  | "cart_optout";
+  | "cart_optout"
+  | "cart_click";
 
 export type EventSeverity = "info" | "warning" | "error";
 
