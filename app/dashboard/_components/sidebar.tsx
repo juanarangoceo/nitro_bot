@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "@/app/actions/auth";
+import { TicketsUnreadBadge } from "./tickets-badge";
 
 export type NavItem = { href: string; label: string };
 
@@ -46,13 +47,14 @@ export function Sidebar({
             <Link
               key={item.href}
               href={item.href}
-              className={`block rounded-lg px-3 py-2 text-sm ${
+              className={`flex items-center rounded-lg px-3 py-2 text-sm ${
                 active
                   ? "bg-(--brand) text-white"
                   : "text-neutral-700 hover:bg-neutral-100"
               }`}
             >
               {item.label}
+              {item.href === "/dashboard/tickets" && <TicketsUnreadBadge />}
             </Link>
           );
         })}

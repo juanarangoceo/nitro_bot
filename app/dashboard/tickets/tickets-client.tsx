@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { MessageBody } from "../message-body";
 import {
+  markTicketRead,
   prepareAgentMediaUpload,
+  reassignTicket,
   replyToTicket,
   resolveTicket,
   sendUploadedMediaFromAgent,
@@ -20,8 +22,12 @@ export type TicketRow = {
   customer_phone: string;
   status: string;
   label_name: string | null;
-  // Nombre del usuario al que se asignó el ticket (null = general).
+  // Usuario al que se asignó el ticket (null = general) y su nombre.
+  assigned_to: string | null;
   assigned_name: string | null;
+  // Última vez que el cliente escribió estando escalado + "sin leer".
+  last_customer_message_at: string | null;
+  has_unread: boolean;
 };
 
 type Message = {
@@ -62,6 +68,12 @@ export function TicketsClient({
   useEffect(() => {
     setSelected((cur) => (cur ? initialTickets.find((t) => t.id === cur.id) ?? null : null));
   }, [initialTickets]);
+
+  // Abrir un ticket "sin leer" lo marca leído. Solo dispara cuando has_unread
+  // es true: el refresh posterior (Realtime) lo trae en false y no re-entra.
+  useEffect(() => {
+    if (selected?.has_unread) void markTicketRead(selected.id);
+  }, [selected?.id, selected?.has_unread]);
 
   // Realtime de la lista: cualquier cambio en tickets refresca el server component.
   useEffect(() => {
@@ -197,8 +209,25 @@ export function TicketsClient({
                 : "border-neutral-200 bg-white hover:border-neutral-400"
             }`}
           >
-            <p className="text-sm font-medium text-neutral-900">{t.customer_phone}</p>
-            <p className="text-xs text-neutral-500">{t.reason ?? "escalado"}</p>
+            <p
+              className={`flex items-center gap-1.5 text-sm text-neutral-900 ${
+                t.has_unread ? "font-semibold" : "font-medium"
+              }`}
+            >
+              {t.has_unread && (
+                <span
+                  className="inline-block h-2 w-2 shrink-0 rounded-full bg-(--brand)"
+                  aria-label="Mensaje nuevo"
+                />
+              )}
+              {t.customer_phone}
+            </p>
+            <p className="text-xs text-neutral-500">
+              {t.has_unread ? (
+                <span className="font-medium text-(--brand)">Mensaje nuevo · </span>
+              ) : null}
+              {t.reason ?? "escalado"}
+            </p>
             <span
               className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
                 t.label_name
@@ -214,7 +243,7 @@ export function TicketsClient({
               </span>
             )}
             <p className="mt-1 text-[11px] text-neutral-400">
-              {new Date(t.created_at).toLocaleString("es-CO")}
+              {new Date(t.last_customer_message_at ?? t.created_at).toLocaleString("es-CO")}
             </p>
           </button>
         ))}
@@ -231,16 +260,46 @@ export function TicketsClient({
                 {selected.assigned_name ? ` · Asignado a ${selected.assigned_name}` : ""}
               </p>
             </div>
-            <form action={resolveTicket}>
-              <input type="hidden" name="ticket_id" value={selected.id} />
-              <input type="hidden" name="conversation_id" value={selected.conversation_id} />
-              <button
-                type="submit"
-                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-100"
-              >
-                Resolver y devolver al bot
-              </button>
-            </form>
+            <div className="flex items-center gap-2">
+              {/* Pasar el ticket a un compañero (o devolverlo al general). */}
+              <form action={reassignTicket}>
+                <input type="hidden" name="ticket_id" value={selected.id} />
+                <select
+                  name="assigned_to"
+                  key={`${selected.id}-${selected.assigned_to ?? ""}`}
+                  defaultValue={selected.assigned_to ?? ""}
+                  onChange={(e) => {
+                    const select = e.currentTarget;
+                    const name = select.selectedOptions[0]?.textContent ?? "";
+                    const ok = confirm(
+                      select.value
+                        ? `¿Pasar este ticket a ${name}? Dejará de aparecer para el resto del equipo.`
+                        : "¿Devolver este ticket a todo el equipo?"
+                    );
+                    if (ok) select.form?.requestSubmit();
+                    else select.value = selected.assigned_to ?? "";
+                  }}
+                  className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs text-neutral-700"
+                >
+                  <option value="">Todo el equipo</option>
+                  {Object.entries(team).map(([id, name]) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </form>
+              <form action={resolveTicket}>
+                <input type="hidden" name="ticket_id" value={selected.id} />
+                <input type="hidden" name="conversation_id" value={selected.conversation_id} />
+                <button
+                  type="submit"
+                  className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-100"
+                >
+                  Resolver y devolver al bot
+                </button>
+              </form>
+            </div>
           </div>
 
           <div ref={messagesRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">

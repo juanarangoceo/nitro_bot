@@ -419,6 +419,17 @@ export async function processInboundMessage(params: {
     .eq("id", conversationId)
     .maybeSingle();
   if (fresh?.status !== "bot_active") {
+    // Conversación escalada: el bot calla, pero el equipo debe ENTERARSE de
+    // que el cliente reescribió — se marca el ticket abierto y el Realtime de
+    // tickets reordena la lista y enciende el badge del dashboard. Post-
+    // debounce: en una ráfaga solo la última invocación llega aquí.
+    if (fresh?.status === "requires_human" || fresh?.status === "human_active") {
+      await supabase
+        .from("tickets")
+        .update({ last_customer_message_at: new Date().toISOString(), has_unread: true })
+        .eq("conversation_id", conversationId)
+        .eq("status", "open");
+    }
     return; // un humano tiene la conversación, o está cerrada.
   }
 

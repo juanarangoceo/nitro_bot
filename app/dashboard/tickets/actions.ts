@@ -6,6 +6,7 @@
 // server-side acotados al tenant del contexto.
 
 import { getDashboardContext } from "@/lib/dashboard/context";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getTenantBySlug } from "@/lib/tenant";
 import {
   sendText,
@@ -223,6 +224,56 @@ export async function sendUploadedMediaFromAgent(
 
   revalidatePath("/dashboard/tickets");
   return { ok: true, error: null };
+}
+
+// Reasigna un ticket a otro miembro del equipo (o lo devuelve al general).
+// Cualquier usuario que VE el ticket puede pasarlo; al asignarlo a alguien,
+// el resto del equipo deja de verlo (SELECT de 0030) — ese es el mecanismo
+// de escalar a un compañero. Autorización en dos pasos: la visibilidad del
+// ticket y el destinatario se validan vía RLS, y el UPDATE va con
+// service_role acotado a (id, tenant) — con el cliente authenticated,
+// Postgres rechaza (42501) un update que saque la fila de la visibilidad de
+// quien lo hace, que es exactamente lo que pasa al asignar a un compañero.
+export async function reassignTicket(formData: FormData): Promise<void> {
+  const { tenant, supabase } = await getDashboardContext();
+  const ticketId = String(formData.get("ticket_id") ?? "");
+  if (!ticketId) return;
+
+  // El ticket debe ser visible para quien reasigna (RLS 0030).
+  const { data: ticket } = await supabase
+    .from("tickets")
+    .select("id")
+    .eq("id", ticketId)
+    .maybeSingle();
+  if (!ticket) return;
+
+  // Destinatario del MISMO tenant (RLS app_users_team_select); un id ajeno o
+  // inventado queda en null (general). La FK compuesta de 0030 respalda.
+  const assignedRaw = String(formData.get("assigned_to") ?? "").trim();
+  let assignedTo: string | null = null;
+  if (assignedRaw) {
+    const { data: member } = await supabase
+      .from("app_users")
+      .select("id")
+      .eq("id", assignedRaw)
+      .maybeSingle();
+    assignedTo = member?.id ?? null;
+  }
+
+  await createAdminClient()
+    .from("tickets")
+    .update({ assigned_to: assignedTo })
+    .eq("id", ticketId)
+    .eq("tenant_id", tenant.id);
+  revalidatePath("/dashboard/tickets");
+}
+
+// Marca un ticket como leído (el agente lo abrió). Sin revalidatePath: el
+// UPDATE dispara el Realtime de tickets y la lista se refresca sola.
+export async function markTicketRead(ticketId: string): Promise<void> {
+  const { supabase } = await getDashboardContext();
+  if (!ticketId) return;
+  await supabase.from("tickets").update({ has_unread: false }).eq("id", ticketId);
 }
 
 // Resuelve un ticket y devuelve la conversación al bot.
