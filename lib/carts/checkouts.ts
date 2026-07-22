@@ -109,12 +109,24 @@ export async function processCheckoutWebhook(
   if (existing && !ACTIVE_STATUSES.includes(existing.status as never)) return;
 
   const phone = extractPhone(payload);
-  if (!phone) return;
+  if (!phone) {
+    // Sin teléfono no hay canal, pero la fuga debe poder medirse. Solo en la
+    // primera vez (sin fila previa): los updates repetidos no re-loguean.
+    if (!existing) {
+      await logEvent({
+        kind: "cart_reminder",
+        severity: "info",
+        tenantId: tenant.id,
+        detail: { stage: "no_phone", token },
+      });
+    }
+    return;
+  }
 
   const lineItems = (payload.line_items ?? [])
     .slice(0, 25)
     .map((li) => ({
-      title: li.title ?? "",
+      title: (li.title ?? "").trim(),
       quantity: li.quantity ?? 1,
       price: li.price ?? null,
     }));
