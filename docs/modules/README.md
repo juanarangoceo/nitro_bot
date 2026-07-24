@@ -14,6 +14,7 @@
 | Datos de pago | `app/admin/settings/payments/`, `lib/platform/payment-settings.ts` |
 | Tickets | `app/dashboard/tickets/`, `lib/tickets/` |
 | Solicitudes | `app/dashboard/requests/`, `app/admin/requests/`, `lib/support/` |
+| Notificaciones internas | `app/admin/notifications/`, `app/dashboard/notifications/` |
 | Persistencia | `lib/supabase/`, `lib/storage.ts`, `supabase/migrations/` |
 | Operación | `lib/ops/`, health y crons |
 

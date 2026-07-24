@@ -50,3 +50,5 @@ Deuda visible: `after()` no es una cola durable; `lib/ai/worker.ts` concentra re
 - Facturas vencidas, comprobantes por Telegram e inversión/ROAS están
   migrados y desplegados. Health, RLS y envío técnico de Telegram verificados;
   queda el control visual con sesión real.
+- Notificaciones internas por tenant/usuario están migradas y validadas; el
+  código está pendiente de despliegue.

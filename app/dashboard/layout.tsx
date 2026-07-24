@@ -40,6 +40,7 @@ export default async function DashboardLayout({
   // «Plan» además exige rol admin: los agentes no ven la facturación.
   const items: NavItem[] = [
     { href: "/dashboard", label: "Inicio" },
+    { href: "/dashboard/notifications", label: "Notificaciones" },
     ...(mod.tickets !== false ? [{ href: "/dashboard/tickets", label: "Tickets" }] : []),
     ...(mod.conversations !== false
       ? [{ href: "/dashboard/conversations", label: "Conversaciones" }]

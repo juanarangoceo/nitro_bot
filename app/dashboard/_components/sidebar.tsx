@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "@/app/actions/auth";
 import { TicketsUnreadBadge } from "./tickets-badge";
+import { NotificationsBadge } from "./notifications-badge";
 
 export type NavItem = { href: string; label: string };
 
@@ -55,6 +56,7 @@ export function Sidebar({
             >
               {item.label}
               {item.href === "/dashboard/tickets" && <TicketsUnreadBadge />}
+              {item.href === "/dashboard/notifications" && <NotificationsBadge />}
             </Link>
           );
         })}

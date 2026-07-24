@@ -1063,6 +1063,15 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     del canal) + botón «Bloquear número» en el detalle de Conversaciones.
 
 ### 🔜 Pendiente
+- **Notificaciones internas (Codex, 2026-07-24; MIGRADO, NO DESPLEGADO)**:
+  migración #39 crea `client_notifications` por tenant y
+  `client_notification_dismissals` por usuario, ambas con RLS y Realtime.
+  `/admin/notifications` publica a un cliente o replica a todos los activos,
+  con prioridad info/importante/urgente e historial archivable.
+  `/dashboard/notifications` muestra la bandeja y una X que descarta SOLO para
+  `auth.uid()`; sidebar tiene badge rojo en vivo. Prueba RLS transaccional con
+  dos usuarios: user1 descarta, user2 la conserva, cross-tenant=0; rollback
+  completo. Typecheck, lint dirigido, build y verify 4/4 verdes. Falta deploy.
 - **Facturas + comprobantes + ROAS (Codex, 2026-07-24; MIGRADO Y
   DESPLEGADO, commit `066061d`)**: migración #38 agrega campos de comprobante en `invoices`,
   bucket privado `payment-proofs` y `marketing_investments` con RLS (equipo
