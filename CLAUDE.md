@@ -1063,6 +1063,15 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     del canal) + botón «Bloquear número» en el detalle de Conversaciones.
 
 ### 🔜 Pendiente
+- **Métricas de mensajes del bot (Codex, 2026-07-24; MIGRADO, NO
+  DESPLEGADO)**: migración #40 agrega índice parcial
+  `messages_bot_metrics_idx` y RPC solo-service_role
+  `admin_bot_message_counts`. Nuevo `/admin/message-metrics` muestra texto,
+  imágenes, voz y videos enviados por `sender='bot'`, excluye conversaciones
+  `is_test` y permite filtrar por cliente o ver toda la plataforma. No descarga
+  mensajes: devuelve máx. 4 filas/tenant. Medición real: PostgreSQL ~31 ms;
+  roundtrip caliente 159–241 ms; acceso público bloqueado. Typecheck, lint,
+  build y verify 4/4 verdes. Falta desplegar.
 - **Notificaciones internas (Codex, 2026-07-24; MIGRADO Y DESPLEGADO,
   commit `f8c7d6f`)**:
   migración #39 crea `client_notifications` por tenant y

@@ -52,3 +52,5 @@ Deuda visible: `after()` no es una cola durable; `lib/ai/worker.ts` concentra re
   queda el control visual con sesión real.
 - Notificaciones internas por tenant/usuario están migradas y desplegadas;
   RLS individual, health y rutas protegidas verificados.
+- Métricas administrativas de mensajes están migradas y medidas; el código
+  está pendiente de despliegue.

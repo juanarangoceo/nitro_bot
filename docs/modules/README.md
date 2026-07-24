@@ -17,5 +17,6 @@
 | Notificaciones internas | `app/admin/notifications/`, `app/dashboard/notifications/` |
 | Persistencia | `lib/supabase/`, `lib/storage.ts`, `supabase/migrations/` |
 | Operación | `lib/ops/`, health y crons |
+| Métricas de mensajes de plataforma | `app/admin/message-metrics/`, RPC `admin_bot_message_counts` |
 
 Un módulo nuevo declara tenant y roles, datos y RLS, entradas, dependencias, idempotencia, telemetría, feature flag, pruebas y rollback.

@@ -10,6 +10,7 @@ const ITEMS = [
   { href: "/admin/requests", label: "Solicitudes" },
   { href: "/admin/notifications", label: "Notificaciones" },
   { href: "/admin/summary", label: "Resumen plataforma" },
+  { href: "/admin/message-metrics", label: "Métricas de mensajes" },
   { href: "/admin/health", label: "Salud" },
   { href: "/admin/tester", label: "Probador" },
   { href: "/admin/settings/payments", label: "Datos de pago" },
