@@ -13,6 +13,7 @@ import {
   formatDueDate,
 } from "@/lib/billing";
 import { getPaymentSettings } from "@/lib/platform/payment-settings";
+import { PaymentProofForm } from "./payment-proof-form";
 
 export default async function PlanPage() {
   const { tenant, role, supabase } = await getDashboardContext();
@@ -30,11 +31,16 @@ export default async function PlanPage() {
   const billing = billingInfo(tenant);
   const paid = billing.status === "pagado";
   const paymentSettings = await getPaymentSettings();
+  const today = new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Bogota",
+  });
 
   // Facturas del cliente (RLS: solo las suyas), las últimas primero.
   const { data: invoiceRows } = await supabase
     .from("invoices")
-    .select("id, concept, description, amount, status, created_at, paid_at, due_date")
+    .select(
+      "id, concept, description, amount, status, created_at, paid_at, due_date, payment_proof_path, payment_proof_uploaded_at"
+    )
     .order("created_at", { ascending: false })
     .limit(12);
   const invoices = invoiceRows ?? [];
@@ -48,7 +54,7 @@ export default async function PlanPage() {
         </p>
       </header>
 
-      <section className="rounded-2xl border border-neutral-200 bg-white p-6">
+      <section id="facturas" className="scroll-mt-6 rounded-2xl border border-neutral-200 bg-white p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-sm text-neutral-500">Plan contratado</p>
@@ -134,12 +140,18 @@ export default async function PlanPage() {
           </p>
         ) : (
           <ul className="mt-3 space-y-2">
-            {invoices.map((inv) => (
+            {invoices.map((inv) => {
+              const overdue =
+                inv.status === "pendiente" && !!inv.due_date && inv.due_date < today;
+              return (
               <li
                 key={inv.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm"
+                className={`rounded-lg border px-3 py-3 text-sm ${
+                  overdue ? "border-red-200 bg-red-50" : "border-neutral-100 bg-neutral-50"
+                }`}
               >
-                <div>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
                   <span className="text-neutral-800">
                     {inv.concept === "renovacion"
                       ? `Renovación del plan${inv.status === "pendiente" ? " (próximo ciclo)" : ""}`
@@ -153,24 +165,36 @@ export default async function PlanPage() {
                   <p className="text-[11px] text-neutral-400">
                     emitida {new Date(inv.created_at).toLocaleDateString("es-CO")}
                     {inv.due_date && inv.status === "pendiente"
-                      ? ` · paga antes del ${formatDueDate(inv.due_date)}`
+                      ? overdue
+                        ? ` · venció el ${formatDueDate(inv.due_date)}`
+                        : ` · paga antes del ${formatDueDate(inv.due_date)}`
                       : ""}
                     {inv.paid_at
                       ? ` · pagada el ${new Date(inv.paid_at).toLocaleDateString("es-CO")}`
                       : ""}
                   </p>
-                </div>
+                  </div>
                 <span
                   className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
                     inv.status === "pagada"
                       ? "bg-emerald-100 text-emerald-700"
+                      : overdue
+                        ? "bg-red-100 text-red-700"
                       : "bg-amber-100 text-amber-700"
                   }`}
                 >
-                  {inv.status === "pagada" ? "Pagada" : "Pendiente"}
+                  {inv.status === "pagada" ? "Pagada" : overdue ? "Vencida" : "Pendiente"}
                 </span>
+                </div>
+                {inv.status === "pendiente" && (
+                  <PaymentProofForm
+                    invoiceId={inv.id}
+                    alreadyUploaded={!!inv.payment_proof_path}
+                  />
+                )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </section>

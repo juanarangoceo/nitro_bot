@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getDashboardContext } from "@/lib/dashboard/context";
 import { bogotaDayStart, bogotaDayEnd } from "@/lib/dates";
 import { ADDON_MESSAGES } from "@/lib/billing";
+import { InvestmentForm } from "./investment-form";
+import { deleteInvestment } from "./actions";
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
@@ -30,7 +32,7 @@ export default async function MetricsPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { supabase, tenant } = await getDashboardContext();
+  const { supabase, tenant, role } = await getDashboardContext();
   const sp = await searchParams;
   const period: Period = sp.period === "week" ? "week" : "month";
 
@@ -41,6 +43,12 @@ export default async function MetricsPage({
   const hasRange = Boolean(fromDay || toDay);
   const since = fromDay ? bogotaDayStart(fromDay)! : periodStart(period);
   const until = toDay ? bogotaDayEnd(toDay)! : null;
+  const investmentSince = new Date(since).toLocaleDateString("en-CA", {
+    timeZone: "America/Bogota",
+  });
+  const investmentUntil = toDay ?? new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Bogota",
+  });
 
   // Las conversaciones de prueba no cuentan (is_test: probador de /admin y
   // números de prueba de la plataforma). Sus órdenes tampoco: se excluyen por
@@ -62,7 +70,7 @@ export default async function MetricsPage({
     );
   }
 
-  const [conversations, botActive, requiresHuman, ordersInPeriod, customers, items] =
+  const [conversations, botActive, requiresHuman, ordersInPeriod, customers, items, investmentRows] =
     await Promise.all([
       supabase
         .from("conversations")
@@ -88,11 +96,23 @@ export default async function MetricsPage({
         if (until) q = q.lt("created_at", until);
         return q;
       })(),
+      supabase
+        .from("marketing_investments")
+        .select("id, investment_date, channel, amount, note, created_at")
+        .gte("investment_date", investmentSince)
+        .lte("investment_date", investmentUntil)
+        .order("investment_date", { ascending: false }),
     ]);
 
   const orders = ordersInPeriod.data ?? [];
   const orderIds = new Set(orders.map((o) => o.id));
   const revenue = orders.reduce((sum, o) => sum + Number(o.total ?? 0), 0);
+  const investments = investmentRows.data ?? [];
+  const investment = investments.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const roas = investment > 0 ? revenue / investment : null;
+  // Sin costo de producto/comisiones no existe utilidad neta confiable. Esta
+  // cifra mide exclusivamente ventas menos pauta declarada.
+  const estimatedAdProfit = revenue - investment;
   const fmtCOP = (n: number) =>
     n.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
@@ -200,6 +220,66 @@ export default async function MetricsPage({
         <Stat label={`Órdenes (${periodLabel})`} value={orders.length} />
         <Stat label={`Ventas (${periodLabel})`} value={fmtCOP(revenue)} />
         <Stat label="Clientes (CRM)" value={customers.count ?? 0} />
+        <Stat label={`Inversión (${periodLabel})`} value={fmtCOP(investment)} />
+        <Stat
+          label={`ROAS (${periodLabel})`}
+          value={roas == null ? "—" : `${roas.toLocaleString("es-CO", { maximumFractionDigits: 2 })}x`}
+        />
+        <Stat
+          label={`Utilidad publicitaria estimada (${periodLabel})`}
+          value={fmtCOP(estimatedAdProfit)}
+        />
+      </section>
+
+      <section className="rounded-2xl border border-neutral-200 bg-white p-6">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-900">Inversión publicitaria</h2>
+          <p className="mt-1 text-xs text-neutral-500">
+            ROAS = ventas ÷ inversión. La utilidad mostrada es ventas − pauta; no descuenta
+            producto, envío, comisiones ni impuestos, por lo que no es utilidad neta.
+          </p>
+        </div>
+        {role === "admin" && (
+          <div className="mt-5 border-t border-neutral-100 pt-5">
+            <InvestmentForm
+              today={new Date().toLocaleDateString("en-CA", {
+                timeZone: "America/Bogota",
+              })}
+            />
+          </div>
+        )}
+        {investments.length > 0 && (
+          <ul className="mt-5 space-y-2 border-t border-neutral-100 pt-5">
+            {investments.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-neutral-50 px-3 py-2 text-sm"
+              >
+                <div>
+                  <span className="font-medium text-neutral-800">{row.channel}</span>
+                  <span className="ml-2 text-neutral-600">{fmtCOP(Number(row.amount))}</span>
+                  <p className="text-[11px] text-neutral-400">
+                    {new Date(`${row.investment_date}T12:00:00-05:00`).toLocaleDateString(
+                      "es-CO"
+                    )}
+                    {row.note ? ` · ${row.note}` : ""}
+                  </p>
+                </div>
+                {role === "admin" && (
+                  <form action={deleteInvestment}>
+                    <input type="hidden" name="investment_id" value={row.id} />
+                    <button
+                      type="submit"
+                      className="text-xs text-red-600 hover:text-red-800"
+                    >
+                      Eliminar
+                    </button>
+                  </form>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="rounded-2xl border border-neutral-200 bg-white">

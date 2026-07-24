@@ -49,3 +49,47 @@ export async function sendTelegramAlert(text: string): Promise<void> {
     console.error("[telegram] alerta no enviada:", (e as Error).message);
   }
 }
+
+// Envía el comprobante como foto con contexto de tenant/factura. Best-effort,
+// igual que las alertas de texto: el upload del cliente no falla si Telegram
+// está temporalmente caído.
+export async function sendTelegramPhoto(params: {
+  bytes: Uint8Array | Buffer;
+  mimeType: string;
+  filename: string;
+  caption: string;
+}): Promise<void> {
+  try {
+    const token = env.TELEGRAM_BOT_TOKEN;
+    const chatId = env.TELEGRAM_CHAT_ID;
+    if (!token || !chatId) return;
+
+    const form = new FormData();
+    form.set("chat_id", chatId);
+    form.set("caption", params.caption);
+    form.set("parse_mode", "HTML");
+    form.set(
+      "photo",
+      new Blob([new Uint8Array(params.bytes)], { type: params.mimeType }),
+      params.filename
+    );
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error(`[telegram] sendPhoto falló (${res.status}): ${body.slice(0, 300)}`);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    console.error("[telegram] foto no enviada:", (e as Error).message);
+  }
+}

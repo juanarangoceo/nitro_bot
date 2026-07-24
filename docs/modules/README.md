@@ -9,6 +9,8 @@
 | Plataforma | `app/admin/`, `lib/admin/`, `lib/provisioning/` |
 | Carritos | `app/dashboard/carts/`, `lib/carts/` |
 | Facturación | `lib/billing.ts`, `lib/billing-cycle.ts` |
+| Facturas y comprobantes | `app/dashboard/plan/`, bucket `payment-proofs` |
+| ROAS e inversión | `app/dashboard/metrics/`, `marketing_investments` |
 | Datos de pago | `app/admin/settings/payments/`, `lib/platform/payment-settings.ts` |
 | Tickets | `app/dashboard/tickets/`, `lib/tickets/` |
 | Solicitudes | `app/dashboard/requests/`, `app/admin/requests/`, `lib/support/` |

@@ -6,6 +6,7 @@
 import { createAdminClient } from "./supabase/admin";
 
 const BUCKET = "wa-media";
+const PAYMENT_PROOFS_BUCKET = "payment-proofs";
 
 // Extensión a partir del mime (suficiente para audio/imagen de WhatsApp).
 // Meta manda parámetros (p. ej. `audio/ogg; codecs=opus`): se recortan para
@@ -91,6 +92,26 @@ export async function uploadTenantLogo(params: {
   if (error) throw new Error(`Storage upload falló: ${error.message}`);
   const { data } = supabase.storage.from("branding").getPublicUrl(path);
   return `${data.publicUrl}?v=${Date.now()}`;
+}
+
+// Comprobantes de facturas: bucket privado y ruta aislada por tenant/factura.
+// El archivo llega por Server Action (máx. 4 MB) y nunca se hace público.
+export async function uploadPaymentProof(params: {
+  tenantId: string;
+  invoiceId: string;
+  bytes: Uint8Array | Buffer;
+  mimeType: string;
+}): Promise<string> {
+  const path = `${params.tenantId}/${params.invoiceId}/proof.${extFor(params.mimeType)}`;
+  const supabase = createAdminClient();
+  const { error } = await supabase.storage
+    .from(PAYMENT_PROOFS_BUCKET)
+    .upload(path, Buffer.from(params.bytes), {
+      contentType: params.mimeType,
+      upsert: true,
+    });
+  if (error) throw new Error(`Storage comprobante falló: ${error.message}`);
+  return path;
 }
 
 // Descarga la media de un mensaje ya persistido (para re-adjuntarla inline a

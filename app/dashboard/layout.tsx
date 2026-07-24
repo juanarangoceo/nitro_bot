@@ -1,15 +1,40 @@
 import { getDashboardContext } from "@/lib/dashboard/context";
 import { Sidebar, type NavItem } from "./_components/sidebar";
 import { BillingAlert } from "./_components/billing-alert";
+import {
+  InvoiceNotice,
+  type InvoiceNoticeSummary,
+} from "./_components/invoice-notice";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { tenant, user, role } = await getDashboardContext();
+  const { tenant, user, role, supabase } = await getDashboardContext();
   const mod = tenant.modules ?? {};
   const isAdmin = role === "admin";
+  let invoiceSummary: InvoiceNoticeSummary = { pending: 0, overdue: 0 };
+  if (isAdmin && mod.plan !== false) {
+    const today = new Date().toLocaleDateString("en-CA", {
+      timeZone: "America/Bogota",
+    });
+    const [pending, overdue] = await Promise.all([
+      supabase
+        .from("invoices")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pendiente"),
+      supabase
+        .from("invoices")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pendiente")
+        .lt("due_date", today),
+    ]);
+    invoiceSummary = {
+      pending: pending.count ?? 0,
+      overdue: overdue.count ?? 0,
+    };
+  }
 
   // Navegación filtrada por los módulos activos del tenant (tenants.modules).
   // «Plan» además exige rol admin: los agentes no ven la facturación.
@@ -53,6 +78,7 @@ export default async function DashboardLayout({
         items={items}
       />
       <main className="flex-1 overflow-auto p-8">
+        <InvoiceNotice summary={invoiceSummary} />
         <BillingAlert tenant={tenant} isAdmin={isAdmin} />
         {children}
       </main>
