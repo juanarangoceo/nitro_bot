@@ -23,6 +23,74 @@ import { env } from "@/lib/env";
 import { revalidatePath } from "next/cache";
 import crypto from "node:crypto";
 
+export type PaymentSettingsState = { ok: boolean; error: string | null };
+
+// ── Datos de pago globales de la plataforma ────────────────────────────────
+// No son por tenant: todos los administradores de cliente ven estos datos en
+// /dashboard/plan. Cada acción vuelve a verificar super-admin y queda auditada.
+export async function updatePaymentSettings(
+  _prev: PaymentSettingsState,
+  fd: FormData
+): Promise<PaymentSettingsState> {
+  const { admin, adminId } = await requirePlatformAdmin();
+  const holder = String(fd.get("payment_holder") ?? "").trim();
+  if (!holder) return { ok: false, error: "El titular es obligatorio." };
+  if (holder.length > 160) return { ok: false, error: "El titular es demasiado largo." };
+
+  const methods: { label: string; value: string }[] = [];
+  for (let i = 0; i < 5; i++) {
+    const label = String(fd.get(`method_label_${i}`) ?? "").trim();
+    const value = String(fd.get(`method_value_${i}`) ?? "").trim();
+    if (!label && !value) continue;
+    if (!label || !value) {
+      return {
+        ok: false,
+        error: `Completa el nombre y el número del medio de pago ${i + 1}.`,
+      };
+    }
+    if (label.length > 80 || value.length > 120) {
+      return { ok: false, error: `El medio de pago ${i + 1} es demasiado largo.` };
+    }
+    methods.push({ label, value });
+  }
+  if (methods.length === 0) {
+    return { ok: false, error: "Agrega al menos un medio de pago." };
+  }
+
+  const { error } = await admin.from("platform_settings").upsert(
+    {
+      key: "billing",
+      payment_holder: holder,
+      payment_methods: methods,
+      updated_at: new Date().toISOString(),
+      updated_by: adminId,
+    },
+    { onConflict: "key" }
+  );
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "42P01"
+          ? "Primero aplica la migración 0037."
+          : "No se pudieron guardar los datos de pago.",
+    };
+  }
+
+  await logAudit(admin, {
+    adminId,
+    action: "update_payment_settings",
+    detail: {
+      // No duplicar números de cuenta ni identificación del titular en logs.
+      method_count: methods.length,
+      method_labels: methods.map((method) => method.label),
+    },
+  });
+  revalidatePath("/admin/settings/payments");
+  revalidatePath("/dashboard/plan");
+  return { ok: true, error: null };
+}
+
 // ── Alta de cliente (el botón) ──────────────────────────────────────────────
 export type ProvisionState = {
   ran: boolean;

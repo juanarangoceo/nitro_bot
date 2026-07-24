@@ -8,12 +8,11 @@ import { getDashboardContext } from "@/lib/dashboard/context";
 import {
   ADDON_MESSAGES,
   ADDON_PENDING_DAYS,
-  PAYMENT_HOLDER,
-  PAYMENT_METHODS,
   billingInfo,
   formatCop,
   formatDueDate,
 } from "@/lib/billing";
+import { getPaymentSettings } from "@/lib/platform/payment-settings";
 
 export default async function PlanPage() {
   const { tenant, role, supabase } = await getDashboardContext();
@@ -30,6 +29,7 @@ export default async function PlanPage() {
   const pct = Math.min(100, Math.round((used / effective) * 100));
   const billing = billingInfo(tenant);
   const paid = billing.status === "pagado";
+  const paymentSettings = await getPaymentSettings();
 
   // Facturas del cliente (RLS: solo las suyas), las últimas primero.
   const { data: invoiceRows } = await supabase
@@ -178,7 +178,7 @@ export default async function PlanPage() {
       <section className="rounded-2xl border border-neutral-200 bg-white p-6">
         <h2 className="text-sm font-semibold text-neutral-900">Datos para el pago</h2>
         <ul className="mt-3 space-y-2">
-          {PAYMENT_METHODS.map((m) => (
+          {paymentSettings.methods.map((m) => (
             <li
               key={m.label}
               className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm"
@@ -188,7 +188,9 @@ export default async function PlanPage() {
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-neutral-500">Titular: {PAYMENT_HOLDER}</p>
+        <p className="mt-3 text-xs text-neutral-500">
+          Titular: {paymentSettings.holder}
+        </p>
         <p className="mt-1 text-xs text-neutral-500">
           Después de pagar, envíanos el comprobante por WhatsApp y registramos tu pago el mismo
           día.

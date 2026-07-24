@@ -11,6 +11,7 @@ const ITEMS = [
   { href: "/admin/summary", label: "Resumen plataforma" },
   { href: "/admin/health", label: "Salud" },
   { href: "/admin/tester", label: "Probador" },
+  { href: "/admin/settings/payments", label: "Datos de pago" },
   { href: "/admin/account", label: "Mi cuenta" },
 ];
 

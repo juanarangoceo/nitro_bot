@@ -13,13 +13,6 @@ export const ADDON_MESSAGES = 2000;
 // no hay vencimiento: manda solo el tope de mensajes.
 export const ADDON_PENDING_DAYS = 15;
 
-// Datos de pago de la plataforma (a donde el cliente consigna la mensualidad).
-export const PAYMENT_HOLDER = "Juan Arango · C.C. 1.088.018.943";
-export const PAYMENT_METHODS = [
-  { label: "Nequi / Llave", value: "314 668 1896" },
-  { label: "Davivienda · Cuenta de ahorros", value: "4884 4795 4865" },
-] as const;
-
 export function formatCop(n: number | null | undefined): string {
   if (n == null) return "—";
   return `$${Number(n).toLocaleString("es-CO")} COP`;
