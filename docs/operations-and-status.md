@@ -47,5 +47,6 @@ Deuda visible: `after()` no es una cola durable; `lib/ai/worker.ts` concentra re
 - La migración `0037_platform_payment_settings.sql` está aplicada y los
   permisos fueron verificados. Queda como control opcional una prueba visual
   cambiando y restaurando un valor desde el panel.
-- Facturas vencidas, comprobantes por Telegram e inversión/ROAS están migrados
-  y validados localmente; el código aún está pendiente de despliegue.
+- Facturas vencidas, comprobantes por Telegram e inversión/ROAS están
+  migrados y desplegados. Health, RLS y envío técnico de Telegram verificados;
+  queda el control visual con sesión real.

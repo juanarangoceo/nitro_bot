@@ -1063,8 +1063,8 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     del canal) + botón «Bloquear número» en el detalle de Conversaciones.
 
 ### 🔜 Pendiente
-- **Facturas + comprobantes + ROAS (Codex, 2026-07-24; MIGRADO, NO
-  DESPLEGADO)**: migración #38 agrega campos de comprobante en `invoices`,
+- **Facturas + comprobantes + ROAS (Codex, 2026-07-24; MIGRADO Y
+  DESPLEGADO, commit `066061d`)**: migración #38 agrega campos de comprobante en `invoices`,
   bucket privado `payment-proofs` y `marketing_investments` con RLS (equipo
   lee, solo admin escribe). El dashboard calcula vencimiento por
   `invoices.due_date`, muestra un rayo rojo arriba a la derecha y enlaza a
@@ -1073,7 +1073,9 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   registrar pauta por fecha/canal y muestra inversión, ROAS (ventas/inversión)
   y utilidad publicitaria estimada (ventas−pauta, explícitamente NO utilidad
   neta). Typecheck, lint dirigido, build, verify 4/4 y pruebas RLS verdes;
-  datos de prueba revertidos. Falta desplegar y smoke test visual.
+  datos de prueba revertidos. Deploy `Ready`, health OK, rutas protegidas y
+  `sendPhoto` de Telegram probado con imagen técnica. Queda control visual con
+  sesión real y primer comprobante real del cliente.
 - **Datos de pago editables desde `/admin` (Codex, 2026-07-24; MIGRADO Y
   DESPLEGADO, commit `8ce6846`)**: migración #37 crea `platform_settings` global,
   solo-service_role, sembrada con los números actuales. Nuevo panel
