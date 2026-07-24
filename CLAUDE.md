@@ -1063,8 +1063,8 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
     del canal) + botón «Bloquear número» en el detalle de Conversaciones.
 
 ### 🔜 Pendiente
-- **Datos de pago editables desde `/admin` (Codex, 2026-07-24; MIGRADO, NO
-  DESPLEGADO)**: migración #37 crea `platform_settings` global,
+- **Datos de pago editables desde `/admin` (Codex, 2026-07-24; MIGRADO Y
+  DESPLEGADO, commit `8ce6846`)**: migración #37 crea `platform_settings` global,
   solo-service_role, sembrada con los números actuales. Nuevo panel
   `/admin/settings/payments` permite cambiar titular y hasta 5 medios de pago;
   cada guardado verifica super-admin y audita solo etiquetas (no números).
@@ -1072,8 +1072,9 @@ Auth) · Meta Cloud API · Gemini 3.5 Flash (`gemini-3.5-flash`, chat) +
   anteriores si la migración todavía no existe. Typecheck, lint dirigido y
   build verdes; el lint global sigue fallando por 21 errores preexistentes en
   health/tickets/conversations. #37 aplicada: seed coincide con los números
-  anteriores y anon queda bloqueado (`42501`). Falta probar admin→dashboard
-  con tenant dev y desplegar.
+  anteriores y anon queda bloqueado (`42501`). Deploy de producción `Ready`;
+  health público OK y la ruta nueva redirige a login sin sesión. Falta solo
+  prueba visual admin→dashboard cambiando/restaurando un valor.
 - **Desplegar la rama `feature/tickets-blocklist-carts` (2026-07-22)**: las
   migraciones #34-#36 YA están aplicadas en la DB viva (todas aditivas, el
   código actual las ignora), así que el merge a main es el único paso que

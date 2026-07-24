@@ -41,8 +41,9 @@ La cronología detallada permanece en `CLAUDE.md`. Ante discrepancias, verificar
 
 Deuda visible: `after()` no es una cola durable; `lib/ai/worker.ts` concentra responsabilidades; `service_role` exige filtros explícitos; falta una suite automatizada más amplia.
 
-## Trabajo local pendiente de activación
+## Implementación reciente
 
-- Datos de pago globales editables desde `/admin/settings/payments`.
-- La migración `0037_platform_payment_settings.sql` ya está aplicada; falta
-  verificar el flujo visual con un tenant de desarrollo antes del despliegue.
+- Datos de pago globales desplegados en `/admin/settings/payments`.
+- La migración `0037_platform_payment_settings.sql` está aplicada y los
+  permisos fueron verificados. Queda como control opcional una prueba visual
+  cambiando y restaurando un valor desde el panel.
